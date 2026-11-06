@@ -1,9 +1,9 @@
+use std::{env, io, time::Duration};
+
+#[cfg(windows)]
 use std::{
     collections::hash_map::DefaultHasher,
-    env,
     hash::{Hash, Hasher},
-    io,
-    time::Duration,
 };
 
 #[cfg(unix)]
@@ -31,7 +31,7 @@ fn endpoint_path() -> io::Result<PathBuf> {
         .filter(|path| {
             fs::metadata(path).is_ok_and(|metadata| metadata.is_dir() && metadata.uid() == uid)
         })
-        .unwrap_or_else(|| env::temp_dir());
+        .unwrap_or_else(env::temp_dir);
     let private_dir = directory.join(format!("dopad-{uid}"));
     match fs::create_dir(&private_dir) {
         Ok(()) => fs::set_permissions(&private_dir, fs::Permissions::from_mode(0o700))?,
@@ -61,6 +61,7 @@ fn endpoint_suffix() -> String {
     stable_hash(&identity).to_string()
 }
 
+#[cfg(windows)]
 fn stable_hash(value: &impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
