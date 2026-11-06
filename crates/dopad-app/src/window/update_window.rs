@@ -1,5 +1,3 @@
-#[cfg(target_os = "linux")]
-use gpui_kit::WindowDecorations;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},

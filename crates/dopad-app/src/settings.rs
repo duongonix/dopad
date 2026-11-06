@@ -406,10 +406,10 @@ fn settings_path() -> Option<PathBuf> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if let Some(root) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from) {
-            if root.is_absolute() {
-                return Some(root.join("dopad").join("settings.json"));
-            }
+        if let Some(root) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from)
+            && root.is_absolute()
+        {
+            return Some(root.join("dopad").join("settings.json"));
         }
         env::var_os("HOME").map(|home| {
             PathBuf::from(home)
@@ -446,10 +446,10 @@ pub(crate) fn app_data_dir() -> Option<PathBuf> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if let Some(root) = env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
-            if root.is_absolute() {
-                return Some(root.join("dopad"));
-            }
+        if let Some(root) = env::var_os("XDG_DATA_HOME").map(PathBuf::from)
+            && root.is_absolute()
+        {
+            return Some(root.join("dopad"));
         }
         env::var_os("HOME").map(|home| {
             PathBuf::from(home)

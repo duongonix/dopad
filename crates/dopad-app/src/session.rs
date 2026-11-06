@@ -132,10 +132,10 @@ fn session_directory() -> Option<PathBuf> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if let Some(root) = env::var_os("XDG_STATE_HOME").map(PathBuf::from) {
-            if root.is_absolute() {
-                return Some(root.join("dopad"));
-            }
+        if let Some(root) = env::var_os("XDG_STATE_HOME").map(PathBuf::from)
+            && root.is_absolute()
+        {
+            return Some(root.join("dopad"));
         }
         env::var_os("HOME").map(|home| {
             PathBuf::from(home)

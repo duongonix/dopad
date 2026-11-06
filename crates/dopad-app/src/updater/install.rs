@@ -1,4 +1,7 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
+
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 pub(crate) fn launch_verified_package(path: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
