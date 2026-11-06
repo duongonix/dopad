@@ -1,6 +1,9 @@
 #[cfg(not(windows))]
 use std::path::Path;
-use std::{env, ffi::OsString, path::PathBuf, process::Command};
+use std::{env, ffi::OsString, path::PathBuf};
+
+#[cfg(windows)]
+use std::process::Command;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShellFamily {
