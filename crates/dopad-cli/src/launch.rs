@@ -78,11 +78,12 @@ mod tests {
     #[test]
     fn recognizes_development_and_linux_package_layouts() {
         let development = desktop_candidates(Path::new("C:/dopad/target/debug/dopad.exe"));
-        assert!(
-            development
-                .iter()
-                .any(|path| path.ends_with("dopad-app.exe"))
-        );
+        let desktop_name = if cfg!(windows) {
+            "dopad-app.exe"
+        } else {
+            "dopad-app"
+        };
+        assert!(development.iter().any(|path| path.ends_with(desktop_name)));
         let linux = desktop_candidates(Path::new("/usr/bin/dopad"));
         assert!(
             linux

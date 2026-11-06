@@ -115,16 +115,17 @@ mod tests {
     #[test]
     fn relative_paths_are_resolved_against_captured_cwd() {
         assert_eq!(
-            absolute_lexical(Path::new("C:/work/project"), Path::new("../README.md")),
-            Path::new("C:/work/README.md")
+            absolute_lexical(Path::new("/work/project"), Path::new("../README.md")),
+            Path::new("/work/README.md")
         );
     }
 
     #[test]
     fn absolute_paths_are_not_rebased() {
+        let absolute = std::env::temp_dir().join("dopad-notes.txt");
         assert_eq!(
-            absolute_lexical(Path::new("C:/work"), Path::new("C:/notes.txt")),
-            Path::new("C:/notes.txt")
+            absolute_lexical(Path::new("relative/cwd"), &absolute),
+            absolute
         );
     }
 
