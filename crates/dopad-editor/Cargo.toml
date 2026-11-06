@@ -1,0 +1,13 @@
+[package]
+name = "dopad-editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dopad-core = { path = "../dopad-core" }
+regex.workspace = true
+thiserror.workspace = true
+
+[[bench]]
+name = "editor_workloads"
+harness = false

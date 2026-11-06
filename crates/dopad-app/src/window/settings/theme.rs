@@ -1,0 +1,11 @@
+pub(super) const BG_PRIMARY: u32 = 0xFFF8E7;
+pub(super) const BG_TOPBAR: u32 = 0xF2E8CF;
+pub(super) const BG_SIDEBAR: u32 = 0xFAF2E5;
+pub(super) const BG_ACTIVE: u32 = 0xEFD8C3;
+pub(super) const BG_HOVER: u32 = 0xF3E5D6;
+pub(super) const TEXT_PRIMARY: u32 = 0x38342F;
+pub(super) const TEXT_SECONDARY: u32 = 0x746F64;
+pub(super) const TEXT_ACTIVE: u32 = 0x713B23;
+pub(super) const ACCENT: u32 = 0xB65F32;
+pub(super) const BORDER: u32 = 0xD8CEBA;
+pub(super) const INPUT_BORDER: u32 = 0xCDBDA8;

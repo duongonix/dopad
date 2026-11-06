@@ -1,0 +1,19 @@
+[package]
+name = "dopad-cli"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "dopad_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dopad"
+path = "src/main.rs"
+
+[dependencies]
+dopad-ipc = { path = "../dopad-ipc" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

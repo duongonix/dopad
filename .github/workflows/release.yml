@@ -1,0 +1,231 @@
+name: Dopad Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dopad-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2025
+            os: windows
+            target: x86_64-pc-windows-msvc
+            archive_arch: x64
+          - platform: windows-arm64
+            runner: windows-11-arm
+            os: windows
+            target: aarch64-pc-windows-msvc
+            archive_arch: arm64
+          - platform: macos-x64
+            runner: macos-15-intel
+            os: macos
+            target: x86_64-apple-darwin
+            archive_arch: x64
+          - platform: macos-arm64
+            runner: macos-15
+            os: macos
+            target: aarch64-apple-darwin
+            archive_arch: arm64
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            target: x86_64-unknown-linux-gnu
+            archive_arch: x64
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            os: linux
+            target: aarch64-unknown-linux-gnu
+            archive_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      DOPAD_UPDATE_PUBLIC_KEY: ${{ vars.DOPAD_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+      - name: Validate release tag, Cargo version, and update key
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read Cargo workspace metadata' }
+          $version = ($metadata.packages | Where-Object { $_.name -eq 'dopad-app' } | Select-Object -First 1).version
+          if (-not $version -or $env:GITHUB_REF_NAME -ne "v$version") { throw "Tag must match dopad-app Cargo version (v$version)" }
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw "Only stable X.Y.Z releases are supported: $version" }
+          if ($env:DOPAD_UPDATE_PUBLIC_KEY -notmatch '^[0-9a-fA-F]{64}$') { throw 'Set the DOPAD_UPDATE_PUBLIC_KEY repository variable before release' }
+          Add-Content -Path $env:GITHUB_ENV -Value "DOPAD_VERSION=$version"
+      - name: Validate release tag, Cargo version, and update key
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dopad-app"))')"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$GITHUB_REF_NAME" = "v$version"
+          [[ "$DOPAD_UPDATE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]
+          printf 'DOPAD_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+      - name: Verify native Rust target
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hostTarget = (rustc -vV | Select-String '^host:').ToString().Split(':')[1].Trim()
+          if ($hostTarget -ne '${{ matrix.target }}') { throw "Expected native target ${{ matrix.target }}, got $hostTarget" }
+      - name: Verify native Rust target
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          host_target="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$host_target" = '${{ matrix.target }}'
+      - name: Install Linux native dependencies
+        if: matrix.os == 'linux'
+        run: bash scripts/install/install-linux-build-deps.sh --packages
+      - name: Install Inno Setup
+        if: matrix.platform == 'windows-x64'
+        run: choco install innosetup --no-progress --yes
+      - name: Build and package Windows
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          if ('${{ matrix.platform }}' -eq 'windows-x64') {
+            $env:PATH += ';C:\Program Files (x86)\Inno Setup 6'
+            Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\Inno Setup 6'
+            pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/install/build-windows.ps1 -CompileInstaller
+          } else {
+            pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/install/build-windows.ps1
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release build or staging failed' }
+          New-Item -ItemType Directory -Force -Path dist/release | Out-Null
+          $archive = "dist/release/dopad-v$env:DOPAD_VERSION-windows-${{ matrix.archive_arch }}.zip"
+          Compress-Archive -Path 'dist/windows/Dopad/*' -DestinationPath $archive -CompressionLevel Optimal
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $archive))
+          try {
+            $entries = @($zip.Entries | ForEach-Object FullName)
+            if ($entries -notcontains 'dopad-gui.exe' -or $entries -notcontains 'bin/dopad.exe') { throw 'Portable ZIP is missing a required executable' }
+          } finally { $zip.Dispose() }
+          if ('${{ matrix.platform }}' -eq 'windows-x64') {
+            $installer = "dist/windows/dopad-v$env:DOPAD_VERSION-windows-x86_64-setup.exe"
+            if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Windows x64 installer is missing' }
+            Copy-Item -LiteralPath $installer -Destination "dist/release/dopad-v$env:DOPAD_VERSION-windows-x86_64-setup.exe"
+          }
+      - name: Build and package macOS
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          bash scripts/install/build-macos-bundle.sh
+          test -x dist/macos/Dopad.app/Contents/MacOS/Dopad
+          dist/macos/Dopad.app/Contents/Resources/bin/dopad --version
+          mkdir -p dist/release
+          archive="dist/release/dopad-v${DOPAD_VERSION}-macos-${{ matrix.archive_arch }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/macos/Dopad.app "$archive"
+          unzip -t "$archive"
+          unzip -Z1 "$archive" | grep -F 'Dopad.app/Contents/MacOS/Dopad' >/dev/null
+      - name: Build and package Linux
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          bash scripts/install/build-linux.sh
+          mkdir -p dist/release
+          archive="dist/release/dopad-v${DOPAD_VERSION}-linux-${{ matrix.archive_arch }}.tar.gz"
+          tar -czf "$archive" -C dist/linux/rootfs usr
+          tar -tzf "$archive" | grep -E '^usr/(bin/dopad|lib/dopad/dopad-gui)$' >/dev/null
+          dependencies="$(ldd target/release/dopad-app)"
+          printf '%s\n' "$dependencies"
+          if grep -F 'not found' <<<"$dependencies"; then echo 'Unresolved Linux dynamic dependency' >&2; exit 1; fi
+          bash scripts/install/build-linux-deb.sh
+          dpkg_arch="$(dpkg --print-architecture)"
+          deb="dist/linux/dopad_${DOPAD_VERSION}_${dpkg_arch}.deb"
+          test -s "$deb"
+          rpm_arch="$(rpm --eval '%{_target_cpu}')"
+          bash scripts/install/build-linux-rpm.sh
+          rpm="$(find dist/linux/rpmbuild/RPMS -type f -name 'dopad-*.rpm' -print -quit)"
+          test -n "$rpm"
+          install -m 0644 "$deb" "dist/release/dopad-v${DOPAD_VERSION}-linux-${rpm_arch}-deb.deb"
+          install -m 0644 "$rpm" "dist/release/dopad-v${DOPAD_VERSION}-linux-${rpm_arch}-rpm.rpm"
+          dpkg-deb --contents "dist/release/dopad-v${DOPAD_VERSION}-linux-${rpm_arch}-deb.deb" | grep -F '/usr/bin/dopad' >/dev/null
+          rpm -qpl "dist/release/dopad-v${DOPAD_VERSION}-linux-${rpm_arch}-rpm.rpm" | grep -F '/usr/bin/dopad' >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dopad-release-${{ matrix.platform }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Validate artifacts and create draft release
+    needs: [package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      DOPAD_UPDATE_PUBLIC_KEY: ${{ vars.DOPAD_UPDATE_PUBLIC_KEY }}
+      DOPAD_UPDATE_PRIVATE_KEY_PEM: ${{ secrets.DOPAD_UPDATE_PRIVATE_KEY_PEM }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dopad-release-*
+          path: dist/release
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned update-signing dependency
+        run: python -m pip install --disable-pip-version-check cryptography==45.0.7
+      - name: Verify all six portable packages
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          for platform in windows-x64 windows-arm64 macos-x64 macos-arm64 linux-x64 linux-arm64; do
+            case "$platform" in
+              linux-*) test -s "dist/release/dopad-v${version}-${platform}.tar.gz" ;;
+              *) test -s "dist/release/dopad-v${version}-${platform}.zip" ;;
+            esac
+          done
+          test -s "dist/release/dopad-v${version}-windows-x86_64-setup.exe"
+          test -s "dist/release/dopad-v${version}-linux-x86_64-deb.deb"
+          test -s "dist/release/dopad-v${version}-linux-x86_64-rpm.rpm"
+          test -s "dist/release/dopad-v${version}-linux-aarch64-deb.deb"
+          test -s "dist/release/dopad-v${version}-linux-aarch64-rpm.rpm"
+      - name: Sign updater packages
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python scripts/release/sign_update_assets.py \
+            --version "$version" \
+            --output dist/release \
+            --asset "windows-x86_64=dist/release/dopad-v${version}-windows-x86_64-setup.exe" \
+            --asset "windows-arm64=dist/release/dopad-v${version}-windows-arm64.zip" \
+            --asset "macos-x64=dist/release/dopad-v${version}-macos-x64.zip" \
+            --asset "macos-arm64=dist/release/dopad-v${version}-macos-arm64.zip" \
+            --asset "linux-x86_64-deb=dist/release/dopad-v${version}-linux-x86_64-deb.deb" \
+            --asset "linux-x86_64-rpm=dist/release/dopad-v${version}-linux-x86_64-rpm.rpm" \
+            --asset "linux-aarch64-deb=dist/release/dopad-v${version}-linux-aarch64-deb.deb" \
+            --asset "linux-aarch64-rpm=dist/release/dopad-v${version}-linux-aarch64-rpm.rpm"
+      - name: Write SHA-256 checksums
+        shell: bash
+        run: |
+          cd dist/release
+          sha256sum * | sort -k2 > SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Dopad ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: dist/release/*
+          fail_on_unmatched_files: true

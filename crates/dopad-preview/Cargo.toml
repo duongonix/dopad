@@ -1,0 +1,13 @@
+[package]
+name = "dopad-preview"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dopad-core = { path = "../dopad-core" }
+markdown.workspace = true
+resvg.workspace = true
+roxmltree.workspace = true
+thiserror.workspace = true
+tiny-skia.workspace = true
+usvg.workspace = true

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dopad
+Comment=Lightweight native text editor
+Exec=dopad %F
+Icon=dopad
+Terminal=false
+Categories=Utility;TextEditor;Development;
+MimeType=text/plain;inode/directory;

@@ -1,0 +1,12 @@
+[package]
+name = "dopad-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ropey.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-segmentation.workspace = true
+tempfile.workspace = true
