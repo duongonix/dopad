@@ -9,7 +9,7 @@ VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json
 SOURCE="$TOP/SOURCES/dopad-$VERSION-rootfs.tar.gz"
 
 command -v rpmbuild >/dev/null || { echo "rpmbuild is required" >&2; exit 1; }
-"$ROOT/scripts/install/build-linux.sh"
+bash "$ROOT/scripts/install/build-linux.sh"
 install -d "$TOP/BUILD" "$TOP/BUILDROOT" "$TOP/RPMS" "$TOP/SOURCES" "$TOP/SPECS" "$TOP/SRPMS"
 tar -C "$DIST/rootfs" -czf "$SOURCE" usr
 cp "$ROOT/packaging/linux/dopad.spec" "$TOP/SPECS/dopad.spec"

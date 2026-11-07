@@ -10,7 +10,7 @@ OUTPUT=""
 command -v dpkg-deb >/dev/null || { echo "dpkg-deb is required" >&2; exit 1; }
 ARCH="$(dpkg --print-architecture)"
 OUTPUT="$ROOT/dist/linux/dopad_${VERSION}_${ARCH}.deb"
-"$ROOT/scripts/install/build-linux.sh"
+bash "$ROOT/scripts/install/build-linux.sh"
 install -d "$STAGE/DEBIAN"
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: dopad
