@@ -89,15 +89,14 @@ jobs:
           host_target="$(rustc -vV | sed -n 's/^host: //p')"
           test "$host_target" = '${{ matrix.target }}'
       - name: Build Desktop and CLI
+        if: runner.os != 'Windows'
         run: cargo build --release --locked -p dopad-app -p dopad-cli
-      - name: Smoke-test CLI
+      - name: Build and smoke-test Windows Desktop and CLI
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & target/release/dopad.exe --version
-          if ($LASTEXITCODE -ne 0) { throw 'CLI version smoke test failed' }
-          & target/release/dopad.exe --help | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'CLI help smoke test failed' }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/install/build-windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build or CLI smoke test failed' }
       - name: Smoke-test CLI
         if: runner.os != 'Windows'
         shell: bash
