@@ -258,10 +258,10 @@ fn image_control(
 fn image_viewport(window: &DopadWindow, ui_window: &Window) -> (f32, f32) {
     let width = ui_window.bounds().size.width.as_f32();
     let height = ui_window.bounds().size.height.as_f32();
-    let sidebar = if window.sidebar.mode == super::sidebar::SidebarMode::Closed {
-        0.0
-    } else {
+    let sidebar = if window.sidebar.mode.has_panel() {
         window.sidebar.width
+    } else {
+        0.0
     };
     let footer_height = if window.settings.current().show_status_bar {
         STATUSBAR_HEIGHT
