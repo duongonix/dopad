@@ -13,20 +13,41 @@ use crate::{
 
 pub fn run() {
     logging::initialize();
+    let launch_paths = collect_launch_paths(std::env::args_os().skip(1));
+    match cli_ipc::try_forward_launch(&launch_paths) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            // Let the exclusive IPC bind arbitrate after a transient forwarding
+            // failure. If another instance owns the endpoint, the fallback below
+            // retries delivery through that instance.
+            tracing::warn!(error = %error, "initial launch forwarding failed; retrying through instance arbitration");
+        }
+    }
     let (ipc_sender, ipc_receiver) = async_channel::bounded(64);
     let ipc_server = match cli_ipc::start_server(ipc_sender) {
         Ok(server) => server,
         Err(error) => {
-            if cli_ipc::forward_focus().is_ok() {
-                return;
+            tracing::debug!(
+                endpoint = %dopad_ipc::endpoint_display(),
+                error = %error,
+                "IPC bind unavailable; retrying launch delivery to the active Desktop"
+            );
+            let forwarded = cli_ipc::forward_launch(&launch_paths);
+            match forwarded {
+                Ok(()) => return,
+                Err(forward_error) => {
+                    tracing::error!(
+                        bind_error = %error,
+                        forwarding_error = %forward_error,
+                        "could not route the launch request to the active Desktop instance"
+                    );
+                    eprintln!("Dopad could not route the requested file: {forward_error}");
+                    return;
+                }
             }
-            tracing::error!(error = %error, "could not initialize local CLI IPC; refusing to start an unroutable Desktop instance");
-            eprintln!("Dopad could not initialize local CLI IPC: {error}");
-            return;
         }
     };
-    let launch_paths = collect_launch_paths(std::env::args_os().skip(1));
-
     let session = SessionCoordinator::new();
     let app_session = session.clone();
     let settings = SettingsService::load();
@@ -63,9 +84,17 @@ pub fn run() {
             let app_updater = updater.clone();
             cx.spawn(async move |cx| {
                 let mut windows = vec![main_window];
+                tracing::info!("main window ready for external IPC requests");
                 while let Ok(message) = ipc_receiver.recv().await {
                     match message {
+                        UiMessage::Probe {
+                            request_id,
+                            response,
+                        } => {
+                            let _ = response.send(cli_ipc::ready_response(request_id));
+                        }
                         UiMessage::Request { request, response } => {
+                            let request_id = request.request_id;
                             windows.retain(|main_window| {
                                 main_window.handle.update(cx, |_, _, _| ()).is_ok()
                             });
@@ -141,6 +170,10 @@ pub fn run() {
                                 selected
                             };
                             if let Some(index) = target_index {
+                                tracing::debug!(
+                                    request_id,
+                                    "dispatching CLI request to editor window"
+                                );
                                 windows[index].view.update(cx, |view, cx| {
                                     view.handle_cli_request(request, response, cx)
                                 });
