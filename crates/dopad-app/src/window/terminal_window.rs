@@ -3,36 +3,31 @@ use std::{path::PathBuf, sync::Arc};
 use dopad_terminal::{
     PtySize, Shell, TerminalSession, TerminalSnapshot, default_shell, discover_shells,
 };
-use gpui_kit::component::TitleBar;
 use gpui_kit::{
-    AnyWindowHandle, AppContext, ClipboardItem, Context, Entity, FocusHandle, KeyDownEvent,
-    ScrollHandle, ScrollStrategy, Subscription, UniformListScrollHandle, Window, WindowBounds,
-    WindowOptions, font, open_window, px, size,
+    ClipboardItem, Context, FocusHandle, KeyDownEvent, ScrollHandle, ScrollStrategy,
+    UniformListScrollHandle, WeakEntity, Window, font, px,
 };
 
 use super::DopadWindow;
 use crate::settings::{AppSettings, SettingsService};
 
-const WINDOW_WIDTH: f32 = 920.;
-const WINDOW_HEIGHT: f32 = 560.;
-const MIN_WINDOW_WIDTH: f32 = 560.;
-const MIN_WINDOW_HEIGHT: f32 = 320.;
-pub(super) const TERMINAL_TOPBAR_HEIGHT: f32 = 44.;
-pub(super) const TERMINAL_FOOTER_HEIGHT: f32 = 30.;
+pub(super) const TERMINAL_PANEL_MIN_HEIGHT: f32 = 120.;
+pub(super) const TERMINAL_PANEL_DEFAULT_HEIGHT: f32 = 250.;
+pub(super) const TERMINAL_TOPBAR_HEIGHT: f32 = 36.;
 pub(super) const TERMINAL_PADDING_X: f32 = 20.;
-pub(super) const TERMINAL_PADDING_Y: f32 = 16.;
+pub(super) const TERMINAL_PADDING_Y: f32 = 8.;
 const TERMINAL_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>"#;
 
 struct TerminalTab {
     id: u64,
     shell: Shell,
-    cwd: PathBuf,
     session: Option<TerminalSession>,
     snapshot: Arc<TerminalSnapshot>,
     starting: bool,
 }
 
 pub(super) struct TerminalWindow {
+    parent: WeakEntity<DopadWindow>,
     settings: SettingsService,
     cwd: PathBuf,
     shells: Vec<Shell>,
@@ -46,62 +41,22 @@ pub(super) struct TerminalWindow {
     tab_scroll: ScrollHandle,
     tab_layout: Option<(usize, usize, f32, f32)>,
     pty_size: PtySize,
-    _resize_observer: Option<Subscription>,
+    panel_width: f32,
+    panel_height: f32,
     selection: Option<((usize, usize), (usize, usize))>,
     selecting: bool,
     auto_follow: bool,
 }
 
-pub(super) fn open(
-    _parent_window: &mut Window,
-    cx: &mut Context<DopadWindow>,
-    settings: SettingsService,
-    cwd: PathBuf,
-) -> anyhow::Result<(AnyWindowHandle, Entity<TerminalWindow>)> {
-    let bounds = WindowBounds::centered(size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
-    let options = WindowOptions {
-        icon: crate::icon::window_icon(),
-        window_bounds: Some(bounds),
-        window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
-        ..TitleBar::window_options()
-    };
-    let (handle, view) = open_window(options, cx, move |window, cx| {
-        window.set_window_title("Terminal");
-        let view = cx.new(|cx| TerminalWindow::new(settings, cwd, cx));
-        view.update(cx, |this, cx| {
-            let bounds = window.bounds();
-            let settings = this.settings.current();
-            let (cell_width, line_height) = terminal_metrics(window, &settings);
-            this.resize_active(
-                f32::from(bounds.size.width),
-                f32::from(bounds.size.height),
-                cell_width,
-                line_height,
-            );
-            this.focus.focus(window, cx);
-            let settings = this.settings.clone();
-            this._resize_observer =
-                Some(cx.observe_window_bounds(window, move |this, window, _| {
-                    let bounds = window.bounds();
-                    let settings = settings.current();
-                    let (cell_width, line_height) = terminal_metrics(window, &settings);
-                    this.resize_active(
-                        f32::from(bounds.size.width),
-                        f32::from(bounds.size.height),
-                        cell_width,
-                        line_height,
-                    );
-                }));
-            this.discover_and_start(cx);
-        });
-        view
-    })?;
-    Ok((handle, view))
-}
-
 impl TerminalWindow {
-    fn new(settings: SettingsService, cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        settings: SettingsService,
+        cwd: PathBuf,
+        parent: WeakEntity<DopadWindow>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
+            parent,
             settings,
             cwd,
             shells: Vec::new(),
@@ -115,14 +70,33 @@ impl TerminalWindow {
             tab_scroll: ScrollHandle::new(),
             tab_layout: None,
             pty_size: PtySize::default(),
-            _resize_observer: None,
+            panel_width: 0.,
+            panel_height: 0.,
             selection: None,
             selecting: false,
             auto_follow: true,
         }
     }
 
-    fn discover_and_start(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn configure_for_panel(&mut self, width: f32, height: f32, window: &Window) {
+        self.panel_width = width.max(1.);
+        self.panel_height = height.max(1.);
+        let settings = self.settings.current();
+        let (cell_width, line_height) = terminal_metrics(window, &settings);
+        self.resize_active(self.panel_width, self.panel_height, cell_width, line_height);
+    }
+
+    pub(super) fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+    }
+
+    pub(super) fn request_hide(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self
+            .parent
+            .update(cx, |parent, cx| parent.hide_terminal(window, cx));
+    }
+
+    pub(super) fn discover_and_start(&mut self, cx: &mut Context<Self>) {
         if !self.discovering {
             return;
         }
@@ -167,7 +141,6 @@ impl TerminalWindow {
         self.tabs.push(TerminalTab {
             id,
             shell: shell.clone(),
-            cwd: self.cwd.clone(),
             session: None,
             snapshot: Arc::new(TerminalSnapshot::default()),
             starting: true,
@@ -214,7 +187,6 @@ impl TerminalWindow {
             self.tabs.push(TerminalTab {
                 id,
                 shell: shell.clone(),
-                cwd: self.cwd.clone(),
                 session: None,
                 snapshot: Arc::new(TerminalSnapshot::default()),
                 starting: true,
@@ -418,11 +390,10 @@ impl TerminalWindow {
         let columns = ((width - TERMINAL_PADDING_X * 2.) / cell_width.max(1.))
             .floor()
             .clamp(2., 500.) as u16;
-        let rows =
-            ((height - TERMINAL_TOPBAR_HEIGHT - TERMINAL_FOOTER_HEIGHT - TERMINAL_PADDING_Y * 2.)
-                / line_height.max(1.))
-            .floor()
-            .clamp(1., 300.) as u16;
+        let rows = ((height - TERMINAL_TOPBAR_HEIGHT - TERMINAL_PADDING_Y * 2.)
+            / line_height.max(1.))
+        .floor()
+        .clamp(1., 300.) as u16;
         let size = PtySize {
             columns,
             rows,
@@ -441,19 +412,18 @@ impl TerminalWindow {
             let _ = session.resize(size);
         }
     }
+}
 
-    pub(super) fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let bounds = window.bounds();
-        let settings = self.settings.current();
-        let (cell_width, line_height) = terminal_metrics(window, &settings);
-        self.resize_active(
-            f32::from(bounds.size.width),
-            f32::from(bounds.size.height),
-            cell_width,
-            line_height,
-        );
-        cx.notify();
-    }
+pub(super) fn max_panel_height(window_height: f32, show_status_bar: bool) -> f32 {
+    let workspace_height = (window_height - 44. - if show_status_bar { 28. } else { 0. }).max(0.);
+    (workspace_height * 0.7).max(TERMINAL_PANEL_MIN_HEIGHT)
+}
+
+pub(super) fn clamp_panel_height(height: f32, window_height: f32, show_status_bar: bool) -> f32 {
+    height.clamp(
+        TERMINAL_PANEL_MIN_HEIGHT,
+        max_panel_height(window_height, show_status_bar),
+    )
 }
 
 pub(super) fn terminal_metrics(window: &Window, settings: &AppSettings) -> (f32, f32) {
