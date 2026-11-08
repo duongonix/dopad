@@ -252,7 +252,10 @@ fn render_match_line(
         )
         .child(
             div()
+                .flex()
+                .items_center()
                 .min_w_0()
+                .overflow_hidden()
                 .text_ellipsis()
                 .child(before)
                 .child(
