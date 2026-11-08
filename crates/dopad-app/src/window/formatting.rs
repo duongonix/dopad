@@ -209,7 +209,8 @@ fn normalize_line_endings(formatted: &str, eol: EolKind, final_eol: bool) -> Str
 fn run_rustfmt(source: &str) -> Result<String, FormatError> {
     let stdout = tempfile::NamedTempFile::new()?;
     let stderr = tempfile::NamedTempFile::new()?;
-    let mut child = Command::new("rustfmt")
+    let mut command = Command::new("rustfmt");
+    command
         .args([
             "--edition",
             "2024",
@@ -220,15 +221,15 @@ fn run_rustfmt(source: &str) -> Result<String, FormatError> {
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout.as_file().try_clone()?))
-        .stderr(Stdio::from(stderr.as_file().try_clone()?))
-        .spawn()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                FormatError::RustfmtUnavailable
-            } else {
-                FormatError::Io(error)
-            }
-        })?;
+        .stderr(Stdio::from(stderr.as_file().try_clone()?));
+    crate::process::suppress_console(&mut command);
+    let mut child = command.spawn().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            FormatError::RustfmtUnavailable
+        } else {
+            FormatError::Io(error)
+        }
+    })?;
     let stdin = child
         .stdin
         .take()
