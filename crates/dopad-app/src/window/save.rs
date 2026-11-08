@@ -50,6 +50,7 @@ impl DopadWindow {
         }
         let existing_path = self.tabs[index].path.clone();
         let title = self.tabs[index].title.clone();
+        let close_batch = self.pending_close_tabs.is_some();
         cx.spawn(async move |this, cx| {
             let path = if force_dialog || existing_path.is_none() {
                 let mut dialog = AsyncFileDialog::new().set_title("Save text file as");
@@ -63,6 +64,12 @@ impl DopadWindow {
                     dialog = dialog.set_file_name(title);
                 }
                 let Some(file) = dialog.save_file().await else {
+                    if close_batch {
+                        let _ = this.update(cx, |view, cx| {
+                            view.cancel_close_batch();
+                            cx.notify();
+                        });
+                    }
                     return;
                 };
                 Some(file.path().to_path_buf())
@@ -70,10 +77,22 @@ impl DopadWindow {
                 existing_path
             };
             let Some(path) = path else {
+                if close_batch {
+                    let _ = this.update(cx, |view, cx| {
+                        view.cancel_close_batch();
+                        cx.notify();
+                    });
+                }
                 return;
             };
             let snapshot = this.update(cx, |view, cx| view.snapshot_document(id, &path, cx));
             let Ok(Some((rope, encoding, eol, expected, revision))) = snapshot else {
+                if close_batch {
+                    let _ = this.update(cx, |view, cx| {
+                        view.cancel_close_batch();
+                        cx.notify();
+                    });
+                }
                 return;
             };
             let save_path = path.clone();
@@ -168,6 +187,7 @@ impl DopadWindow {
                     self.refresh_auto_language(completion.id, cx);
                 }
                 if path_changed {
+                    self.close_lsp_document(completion.id);
                     self.document_path_changed(completion.id, cx);
                 }
                 if completion.close_after == Some(completion.id)
@@ -178,9 +198,21 @@ impl DopadWindow {
                         .is_some_and(|tab| !tab.is_dirty())
                 {
                     self.remove_tab(completion.id);
+                    if self.pending_close_tabs.is_some() {
+                        self.close_batch_resume = true;
+                    }
+                } else if completion.close_after == Some(completion.id)
+                    && self.pending_close_tabs.is_some()
+                {
+                    self.cancel_close_batch();
                 }
             }
             Err(error) => {
+                if completion.close_after == Some(completion.id)
+                    && self.pending_close_tabs.is_some()
+                {
+                    self.cancel_close_batch();
+                }
                 if matches!(error, dopad_core::FileError::ExternalModification(_))
                     && let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == completion.id)
                 {
