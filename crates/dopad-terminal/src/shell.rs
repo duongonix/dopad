@@ -119,7 +119,10 @@ fn discover_windows(output: &mut Vec<Shell>) {
 
     if let Some(wsl) = find_on_path("wsl") {
         // WSL output is UTF-16LE on Windows; discovery is performed only after opening Terminal.
-        if let Ok(result) = Command::new(&wsl).args(["--list", "--quiet"]).output()
+        let mut command = Command::new(&wsl);
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+        if let Ok(result) = command.args(["--list", "--quiet"]).output()
             && result.status.success()
         {
             let (units, _) = result.stdout.as_chunks::<2>();
