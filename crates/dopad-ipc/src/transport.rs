@@ -117,7 +117,7 @@ fn bind_platform() -> io::Result<LocalSocketListener> {
 fn create_listener() -> io::Result<LocalSocketListener> {
     ListenerOptions::new()
         .name(endpoint_name()?)
-        .nonblocking(ListenerNonblockingMode::Accept)
+        .nonblocking(ListenerNonblockingMode::Both)
         .try_overwrite(false)
         .create_sync()
 }
@@ -134,7 +134,7 @@ fn create_listener() -> io::Result<LocalSocketListener> {
     ListenerOptions::new()
         .name(endpoint_name()?)
         .security_descriptor(descriptor)
-        .nonblocking(ListenerNonblockingMode::Accept)
+        .nonblocking(ListenerNonblockingMode::Both)
         .try_overwrite(false)
         .create_sync()
 }
@@ -172,6 +172,7 @@ pub fn connect(timeout: Duration) -> io::Result<LocalSocketStream> {
     ConnectOptions::new()
         .name(endpoint_name()?)
         .wait_mode(ConnectWaitMode::Timeout(timeout))
+        .nonblocking_stream(true)
         .connect_sync()
 }
 
@@ -289,5 +290,100 @@ mod tests {
         let response: CliResponse = read_frame(&mut client).expect("response should decode");
         assert_eq!(response.request_id, 19);
         assert_eq!(response.status, ResponseStatus::Success);
+    }
+
+    #[test]
+    fn readiness_probe_waits_for_a_matching_ui_pong() {
+        let name = test_name();
+        let listener = ListenerOptions::new()
+            .name(name.clone())
+            .nonblocking(ListenerNonblockingMode::Accept)
+            .create_sync()
+            .expect("listener should bind");
+        let mut client = ConnectOptions::new()
+            .name(name)
+            .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
+            .nonblocking_stream(true)
+            .connect_sync()
+            .expect("client should connect");
+        let mut server = accept(&listener).expect("probe client should be accepted");
+        let server_thread = std::thread::spawn(move || {
+            let request: CliRequest = read_frame(&mut server).expect("probe should decode");
+            assert_eq!(request.request_id, 42);
+            assert_eq!(request.command, CliCommand::Ping { request_id: 42 });
+            write_frame(
+                &mut server,
+                &CliResponse {
+                    version: PROTOCOL_VERSION,
+                    request_id: 42,
+                    phase: ResponsePhase::Pong,
+                    status: ResponseStatus::Success,
+                    message: None,
+                },
+            )
+            .expect("Pong should encode");
+            let _ = read_frame::<CliRequest>(&mut server);
+        });
+        assert!(crate::probe(&mut client, Duration::from_secs(2), 42).expect("ready Pong"));
+        drop(client);
+        server_thread.join().expect("probe server should finish");
+    }
+
+    #[test]
+    fn readiness_probe_recognizes_a_responsive_legacy_server() {
+        let name = test_name();
+        let listener = ListenerOptions::new()
+            .name(name.clone())
+            .nonblocking(ListenerNonblockingMode::Accept)
+            .create_sync()
+            .expect("listener should bind");
+        let mut client = ConnectOptions::new()
+            .name(name)
+            .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
+            .nonblocking_stream(true)
+            .connect_sync()
+            .expect("client should connect");
+        let mut server = accept(&listener).expect("probe client should be accepted");
+        let server_thread = std::thread::spawn(move || {
+            let request: CliRequest = read_frame(&mut server).expect("probe should decode");
+            assert_eq!(request.request_id, 43);
+            write_frame(
+                &mut server,
+                &CliResponse {
+                    version: PROTOCOL_VERSION,
+                    request_id: 43,
+                    phase: ResponsePhase::Complete,
+                    status: ResponseStatus::InvalidRequest,
+                    message: Some("unexpected ping".into()),
+                },
+            )
+            .expect("legacy response should encode");
+            let _ = read_frame::<CliRequest>(&mut server);
+        });
+        assert!(!crate::probe(&mut client, Duration::from_secs(2), 43).expect("legacy response"));
+        drop(client);
+        server_thread.join().expect("probe server should finish");
+    }
+
+    #[test]
+    fn nonblocking_pipe_waits_until_frame_deadline_when_peer_is_idle() {
+        let name = test_name();
+        let listener = ListenerOptions::new()
+            .name(name.clone())
+            .nonblocking(ListenerNonblockingMode::Accept)
+            .create_sync()
+            .expect("listener should bind");
+        let mut client = ConnectOptions::new()
+            .name(name)
+            .wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(2)))
+            .nonblocking_stream(true)
+            .connect_sync()
+            .expect("client should connect");
+        let _server = accept(&listener).expect("idle client should be accepted");
+
+        let error =
+            crate::read_frame_timeout::<CliResponse>(&mut client, Duration::from_millis(30))
+                .expect_err("an idle pipe should time out instead of reporting EOF");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     }
 }
