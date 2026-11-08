@@ -15,8 +15,31 @@ use crate::icon_theme::{IconImageCache, IconThemeManager};
 pub enum SidebarMode {
     #[default]
     Closed,
+    Rail,
     Explorer,
     Search,
+}
+
+impl SidebarMode {
+    pub(in crate::window) fn is_visible(self) -> bool {
+        self != Self::Closed
+    }
+
+    pub(in crate::window) fn has_panel(self) -> bool {
+        matches!(self, Self::Explorer | Self::Search)
+    }
+
+    pub(super) fn toggle_sidebar(self, last_panel: Self) -> Self {
+        if self.is_visible() {
+            Self::Closed
+        } else {
+            last_panel
+        }
+    }
+
+    pub(super) fn toggle_panel(self, panel: Self) -> Self {
+        if self == panel { Self::Rail } else { panel }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -122,6 +145,7 @@ impl Default for SearchPanelState {
 
 pub struct SidebarState {
     pub(in crate::window) mode: SidebarMode,
+    pub(in crate::window) last_panel: SidebarMode,
     pub(in crate::window) width: f32,
     pub(super) explorer: ExplorerState,
     pub(super) search: SearchPanelState,
@@ -131,6 +155,7 @@ impl SidebarState {
     pub fn new(width: u16) -> Self {
         Self {
             mode: SidebarMode::Closed,
+            last_panel: SidebarMode::Explorer,
             width: f32::from(width.clamp(220, 420)),
             explorer: ExplorerState::default(),
             search: SearchPanelState::default(),
@@ -140,7 +165,7 @@ impl SidebarState {
 
 #[cfg(test)]
 mod explorer_icon_state_tests {
-    use super::ExplorerState;
+    use super::{ExplorerState, SidebarMode};
 
     #[test]
     fn icon_theme_and_decoded_image_cache_start_uninitialized() {
@@ -149,5 +174,29 @@ mod explorer_icon_state_tests {
         assert!(state.icon_cache.is_none());
         assert!(!state.icon_theme_loading);
         assert!(!state.icon_theme_failed);
+    }
+
+    #[test]
+    fn navigation_rail_and_panels_have_independent_visibility_states() {
+        assert_eq!(
+            SidebarMode::Closed.toggle_sidebar(SidebarMode::Explorer),
+            SidebarMode::Explorer
+        );
+        assert_eq!(
+            SidebarMode::Rail.toggle_panel(SidebarMode::Explorer),
+            SidebarMode::Explorer
+        );
+        assert_eq!(
+            SidebarMode::Explorer.toggle_panel(SidebarMode::Explorer),
+            SidebarMode::Rail
+        );
+        assert_eq!(
+            SidebarMode::Explorer.toggle_panel(SidebarMode::Search),
+            SidebarMode::Search
+        );
+        assert_eq!(
+            SidebarMode::Search.toggle_sidebar(SidebarMode::Search),
+            SidebarMode::Closed
+        );
     }
 }
