@@ -13,11 +13,12 @@ use gpui_kit::{
 use crate::{
     settings::{SettingsService, save_file},
     theme::{self, Palette},
-    updater::{UpdateManager, UpdateState, current_version},
+    updater::{UpdateManager, UpdateState},
 };
 use gpui_kit::component::Disableable;
 
 use super::DopadWindow;
+mod about;
 mod lifecycle;
 mod progress;
 
@@ -326,7 +327,7 @@ fn render_body(
     let message = match state {
         UpdateState::NotChecked => "Installed version".to_owned(),
         UpdateState::Checking => "Retrieving release metadata from GitHub…".to_owned(),
-        UpdateState::UpToDate => format!("Installed version: v{}", current_version()),
+        UpdateState::UpToDate => return about::render(palette),
         UpdateState::Failed { message, .. } => message.clone(),
         UpdateState::Available(_)
         | UpdateState::Downloading { .. }
@@ -456,28 +457,30 @@ impl UpdateWindow {
 impl DopadWindow {
     pub(super) fn open_update(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let current_window = self.updater.read(cx).window;
-        if let Some(handle) = current_window
-            && handle
+        let is_open = current_window.is_some_and(|handle| {
+            handle
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
-        {
-            return;
-        }
-
-        match lifecycle::open(self.updater.clone(), self.settings.clone(), cx) {
-            Ok(handle) => self
-                .updater
-                .update(cx, |manager, _| manager.window = Some(handle)),
-            Err(error) => {
-                self.set_status(format!("Could not open Update: {error:#}"));
-                cx.notify();
-                return;
+        });
+        if !is_open {
+            match lifecycle::open(self.updater.clone(), self.settings.clone(), cx) {
+                Ok(handle) => self
+                    .updater
+                    .update(cx, |manager, _| manager.window = Some(handle)),
+                Err(error) => {
+                    self.set_status(format!("Could not open Update: {error:#}"));
+                    cx.notify();
+                    return;
+                }
             }
         }
+
         let state = self.updater.read(cx).state.clone();
         if matches!(
             state,
-            UpdateState::NotChecked | UpdateState::Failed { details: None, .. }
+            UpdateState::NotChecked
+                | UpdateState::UpToDate
+                | UpdateState::Failed { details: None, .. }
         ) {
             self.updater
                 .update(cx, |manager, cx| manager.check(cx, true));
