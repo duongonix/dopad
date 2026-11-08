@@ -1,4 +1,8 @@
-use std::io::{self, Read, Write};
+use std::{
+    io::{self, Read, Write},
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::MAX_FRAME_BYTES;
 
@@ -16,6 +20,72 @@ pub fn write_frame<T: serde::Serialize>(writer: &mut impl Write, value: &T) -> i
     writer.write_all(&length.to_le_bytes())?;
     writer.write_all(&payload)?;
     writer.flush()
+}
+
+/// Writes one framed payload before `timeout` expires. The writer must be nonblocking.
+pub fn write_frame_timeout<T: serde::Serialize>(
+    writer: &mut impl Write,
+    value: &T,
+    timeout: Duration,
+) -> io::Result<()> {
+    let payload = serde_json::to_vec(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if payload.is_empty() || payload.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "IPC frame exceeds the configured size limit",
+        ));
+    }
+    let length = u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "IPC frame is too large"))?;
+    let deadline = Instant::now() + timeout;
+    write_all_until(writer, &length.to_le_bytes(), deadline)?;
+    write_all_until(writer, &payload, deadline)?;
+    loop {
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if is_timeout(&error) && Instant::now() < deadline => {
+                thread::sleep(
+                    Duration::from_millis(10)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            Err(error) if is_timeout(&error) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out writing an IPC frame",
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn write_all_until(
+    writer: &mut impl Write,
+    mut remaining: &[u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !remaining.is_empty() {
+        match writer.write(remaining) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+            Ok(written) => remaining = &remaining[written..],
+            Err(error) if is_timeout(&error) && Instant::now() < deadline => {
+                thread::sleep(
+                    Duration::from_millis(10)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            Err(error) if is_timeout(&error) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out writing an IPC frame",
+                ));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 pub fn read_frame<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> io::Result<T> {
