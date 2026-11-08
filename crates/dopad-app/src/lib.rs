@@ -6,6 +6,7 @@ mod error;
 mod icon;
 mod icon_theme;
 mod logging;
+mod process;
 mod session;
 mod settings;
 mod syntax;
