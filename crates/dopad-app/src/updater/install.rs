@@ -12,7 +12,9 @@ pub(crate) fn launch_verified_package(path: &Path) -> anyhow::Result<()> {
             })?;
             return Ok(());
         }
-        Command::new(path).spawn().map_err(|error| {
+        let mut command = Command::new(path);
+        crate::process::suppress_console(&mut command);
+        command.spawn().map_err(|error| {
             anyhow::anyhow!("could not launch the verified Dopad installer: {error}")
         })?;
         return Ok(());
