@@ -9,3 +9,4 @@ async-channel.workspace = true
 alacritty_terminal.workspace = true
 portable-pty.workspace = true
 thiserror.workspace = true
+windows-sys.workspace = true
