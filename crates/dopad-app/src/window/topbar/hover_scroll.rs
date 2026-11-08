@@ -9,14 +9,14 @@ const MIN_FRAME_SECONDS: f32 = 1.0 / 120.0;
 const MAX_FRAME_SECONDS: f32 = 1.0 / 30.0;
 
 #[derive(Default)]
-pub(super) struct HoverScrollState {
+pub(in crate::window) struct HoverScrollState {
     generation: u64,
     running: bool,
     last_frame: Option<Instant>,
 }
 
 impl HoverScrollState {
-    pub(super) fn pointer_moved(
+    pub(in crate::window) fn pointer_moved(
         &mut self,
         pointer: Point<Pixels>,
         scroll: &ScrollHandle,
@@ -89,11 +89,11 @@ impl HoverScrollState {
     }
 }
 
-pub(super) fn cancel<C: AppContext>(state: &Entity<HoverScrollState>, cx: &mut C) {
+pub(in crate::window) fn cancel<C: AppContext>(state: &Entity<HoverScrollState>, cx: &mut C) {
     state.update(cx, |state, _| state.stop());
 }
 
-pub(super) fn schedule_frame<V: 'static>(
+pub(in crate::window) fn schedule_frame<V: 'static>(
     window: &mut Window,
     state: Entity<HoverScrollState>,
     scroll: ScrollHandle,
