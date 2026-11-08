@@ -75,7 +75,7 @@ pub(super) fn render_output(
     .py(px(TERMINAL_PADDING_Y))
     .track_scroll(&scroll)
     .on_scroll(cx.listener(|this, _, _, cx| {
-        this.auto_follow = false;
+        this.auto_follow = this.output_scroll.is_scrolled_to_end().unwrap_or(true);
         cx.notify();
     }))
     .into_any_element()
