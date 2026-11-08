@@ -9,25 +9,96 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={autopf}\Dopad
 DefaultGroupName=Dopad
-UninstallDisplayIcon={app}\dopad-gui.exe
+SetupIconFile=..\..\dist\windows\Dopad\dopad.ico
+UninstallDisplayIcon={app}\dopad.ico
 ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\..\dist\windows
 OutputBaseFilename=dopad-v{#AppVersion}-windows-x86_64-setup
 PrivilegesRequired=lowest
 ChangesEnvironment=yes
+ChangesAssociations=yes
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 
 [Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce
 Name: "addtopath"; Description: "Add Dopad CLI to the current user's PATH"; GroupDescription: "Command line:"; Flags: checkedonce
 
 [Files]
 Source: "..\..\dist\windows\Dopad\dopad-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dist\windows\Dopad\bin\dopad.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "..\..\dist\windows\Dopad\dopad.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Dopad"; Filename: "{app}\dopad-gui.exe"; WorkingDir: "{userdocs}"
+Name: "{autoprograms}\Dopad"; Filename: "{app}\dopad-gui.exe"; WorkingDir: "{userdocs}"; IconFilename: "{app}\dopad.ico"
+Name: "{autodesktop}\Dopad"; Filename: "{app}\dopad-gui.exe"; WorkingDir: "{userdocs}"; IconFilename: "{app}\dopad.ico"; Tasks: desktopicon
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Dopad"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\dopad-gui.exe"",0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\dopad-gui.exe"" ""%1"""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: none; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".txt"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".md"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".markdown"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".rs"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".toml"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".json"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".yaml"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".yml"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".js"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".ts"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".tsx"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".py"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".html"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".css"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".xml"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".sh"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".log"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".png"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".jpg"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".jpeg"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".gif"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".bmp"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".webp"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".ico"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".svg"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".adoc"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".rst"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".mjs"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cjs"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".jsx"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".htm"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".scss"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".sass"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".csv"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".ini"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cfg"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".conf"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".properties"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".sql"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".c"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".h"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cc"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cpp"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cxx"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".hpp"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".hxx"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cs"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".go"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".java"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".kt"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".kts"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".rb"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".php"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".swift"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".vue"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".svelte"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".ps1"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".psm1"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".bat"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\Applications\dopad-gui.exe\SupportedTypes"; ValueType: string; ValueName: ".cmd"; ValueData: ""; Flags: uninsdeletevalue
 
 [Code]
 const
