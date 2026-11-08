@@ -34,6 +34,7 @@ impl DopadWindow {
     pub(crate) fn cancel_cli_request(&mut self, request_id: u64) {
         self.pending_cli_requests.retain(|message| match message {
             crate::cli_ipc::UiMessage::Request { request, .. } => request.request_id != request_id,
+            crate::cli_ipc::UiMessage::Probe { .. } => true,
             crate::cli_ipc::UiMessage::CancelWait { .. } => true,
         });
         self.cli_open_states.remove(&request_id);
@@ -62,6 +63,13 @@ impl DopadWindow {
             })
             .collect();
         for request_id in request_ids {
+            tracing::debug!(
+                request_id,
+                document_id,
+                opened,
+                is_text,
+                "CLI requested file load completed"
+            );
             let Some(state) = self.cli_open_states.get_mut(&request_id) else {
                 continue;
             };
@@ -140,6 +148,12 @@ impl DopadWindow {
                 return;
             }
         };
+        tracing::debug!(
+            request_id,
+            target_count = decoded_targets.len(),
+            wait,
+            "opening CLI file/folder targets"
+        );
 
         let mut document_ids = Vec::new();
         for (path, kind) in decoded_targets {
@@ -249,6 +263,10 @@ impl DopadWindow {
                 ResponseStatus::OpenFailed,
                 Some(error),
             ));
+            return;
+        }
+        if !wait {
+            let _ = response.send(crate::cli_ipc::accepted_response(request_id));
             return;
         }
         if wait {
