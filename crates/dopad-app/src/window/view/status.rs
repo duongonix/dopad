@@ -50,47 +50,38 @@ pub(super) fn render(
             });
 
     let update_available = window.updater.read(cx).state.has_update();
+    let sidebar_visible = window.sidebar.mode.is_visible();
     let left = div()
         .flex()
         .items_center()
         .gap_1()
         .child(
-            Button::new("status-explorer")
-                .icon(IconName::Folder)
-                .xsmall()
-                .compact()
-                .ghost()
-                .when(
-                    window.sidebar.mode == super::super::sidebar::SidebarMode::Explorer,
-                    |button| button.text_color(rgb(palette.accent)),
+            Button::new("status-sidebar")
+                .child(
+                    Icon::new(if sidebar_visible {
+                        IconName::PanelLeftClose
+                    } else {
+                        IconName::PanelLeftOpen
+                    })
+                    .with_size(Size::Size(px(17.))),
                 )
-                .tooltip("Explorer")
-                .accessibility_label("Toggle Explorer")
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_explorer(cx))),
-        )
-        .child(
-            Button::new("status-search-files")
-                .icon(IconName::Search)
                 .xsmall()
                 .compact()
                 .ghost()
-                .when(
-                    window.sidebar.mode == super::super::sidebar::SidebarMode::Search,
-                    |button| button.text_color(rgb(palette.accent)),
-                )
-                .tooltip("Search in Files")
-                .accessibility_label("Toggle Search in Files")
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_search(window, cx))),
-        )
-        .child(
-            Button::new("status-extensions")
-                .icon(IconName::Puzzle)
-                .xsmall()
-                .compact()
-                .ghost()
-                .disabled(true)
-                .tooltip("Extensions — Coming later")
-                .accessibility_label("Extensions, coming later"),
+                .when(sidebar_visible, |button| {
+                    button.text_color(rgb(palette.accent))
+                })
+                .tooltip(if sidebar_visible {
+                    "Hide Sidebar"
+                } else {
+                    "Show Sidebar"
+                })
+                .accessibility_label(if sidebar_visible {
+                    "Hide Sidebar"
+                } else {
+                    "Show Sidebar"
+                })
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
         )
         .child(
             Button::new("status-terminal")
@@ -102,9 +93,20 @@ pub(super) fn render(
                 .xsmall()
                 .compact()
                 .ghost()
-                .tooltip("Open Terminal")
-                .accessibility_label("Open Terminal")
-                .on_click(cx.listener(|this, _, window, cx| this.open_terminal(window, cx))),
+                .when(window.terminal_visible, |button| {
+                    button.text_color(rgb(palette.accent))
+                })
+                .tooltip(if window.terminal_visible {
+                    "Hide Terminal"
+                } else {
+                    "Open Terminal"
+                })
+                .accessibility_label(if window.terminal_visible {
+                    "Hide Terminal"
+                } else {
+                    "Open Terminal"
+                })
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx))),
         )
         .child(
             Button::new("status-update")
@@ -147,7 +149,10 @@ pub(super) fn render(
         );
     let viewer_status = window.active_tab().and_then(|tab| match &tab.content {
         super::super::file_view::TabContent::Image(state) => {
-            let sidebar = (window.sidebar.mode != super::super::sidebar::SidebarMode::Closed)
+            let sidebar = window
+                .sidebar
+                .mode
+                .has_panel()
                 .then_some(window.sidebar.width);
             Some(format!(
                 "{} · {} × {} · {} · {}%",
