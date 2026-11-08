@@ -1,12 +1,15 @@
 mod body;
 mod status;
 
-use gpui_kit::component::resizable::{h_resizable, resizable_panel};
+use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb,
 };
 
-use super::{DopadWindow, ResetZoom, TogglePreview, ToggleWrap, ZoomIn, ZoomOut, session_state};
+use super::{
+    DopadWindow, ResetZoom, TogglePreview, ToggleWrap, ZoomIn, ZoomOut, session_state,
+    terminal_window,
+};
 use crate::theme;
 
 impl Render for DopadWindow {
@@ -21,6 +24,7 @@ impl Render for DopadWindow {
             this.handle_file_drop(event, cx);
         });
         self.ensure_active_ui(window, cx);
+        self.ensure_active_lsp(cx);
         self.ensure_preview(cx);
         self.ensure_active_image(cx);
 
@@ -30,41 +34,113 @@ impl Render for DopadWindow {
         let topbar = super::topbar::render(self, window, palette, cx).into_any_element();
         let status = status::render(self, body.state.preview_mode, window, palette, cx);
         let notifications = self.notifications.clone();
-        let body_region = if self.sidebar.mode == super::sidebar::SidebarMode::Closed {
-            body.element
-        } else {
-            let sidebar = super::sidebar::render(self, window, palette, cx);
-            let settings = self.settings.clone();
-            h_resizable("dopad-workspace-panels")
+        let lsp_toast = super::lsp::render_install_toast(self, palette, cx);
+        let sidebar_mode = self.sidebar.mode;
+        let bounds = window.bounds();
+        let show_status_bar = self.settings.current().show_status_bar;
+        let max_terminal_height =
+            terminal_window::max_panel_height(f32::from(bounds.size.height), show_status_bar);
+        self.terminal_height = self.terminal_height.clamp(
+            terminal_window::TERMINAL_PANEL_MIN_HEIGHT,
+            max_terminal_height,
+        );
+        let left_width = (if sidebar_mode.is_visible() { 48. } else { 0. })
+            + if sidebar_mode.has_panel() {
+                self.sidebar.width
+            } else {
+                0.
+            };
+        let terminal_width = (f32::from(bounds.size.width) - left_width).max(1.);
+        if self.terminal_visible
+            && let Some(terminal) = self.terminal_panel.as_ref().cloned()
+        {
+            let terminal_height = self.terminal_height;
+            terminal.update(cx, |terminal, _| {
+                terminal.configure_for_panel(terminal_width, terminal_height, window)
+            });
+        }
+
+        let mut editor_region = body.element;
+        if self.terminal_visible
+            && let Some(terminal) = self.terminal_panel.as_ref().cloned()
+        {
+            let terminal_height = self.terminal_height;
+            let terminal_min = terminal_window::TERMINAL_PANEL_MIN_HEIGHT;
+            let terminal_max = max_terminal_height;
+            let view = cx.entity();
+            editor_region = v_resizable("dopad-editor-terminal-panels")
+                .child(resizable_panel().child(editor_region))
                 .child(
                     resizable_panel()
-                        .size(px(self.sidebar.width))
-                        .size_range(px(220.)..px(420.))
+                        .size(px(terminal_height))
+                        .size_range(px(terminal_min)..px(terminal_max))
                         .flex_none()
-                        .child(sidebar),
+                        .child(terminal),
                 )
-                .child(resizable_panel().child(body.element))
                 .on_resize(move |state, _, app| {
-                    let Some(size) = state.read(app).sizes().first().copied() else {
+                    let Some(size) = state.read(app).sizes().last().copied() else {
                         return;
                     };
-                    let width = f32::from(size).round().clamp(220., 420.) as u16;
-                    let mut current = settings.current();
-                    if current.sidebar_width == width {
-                        return;
-                    }
-                    current.sidebar_width = width;
-                    settings.replace(current.clone());
-                    if let Some(path) = settings.path() {
-                        app.background_executor()
-                            .spawn(async move {
-                                if let Err(error) = crate::settings::save_file(&path, &current) {
-                                    tracing::warn!(error = %error, "sidebar width could not be persisted");
-                                }
-                            })
-                            .detach();
-                    }
+                    let height = f32::from(size).round().clamp(terminal_min, terminal_max);
+                    view.update(app, |this, cx| {
+                        if (this.terminal_height - height).abs() > 0.5 {
+                            this.terminal_height = height;
+                            cx.notify();
+                        }
+                    });
                 })
+                .into_any_element();
+        }
+
+        let body_region = if !sidebar_mode.is_visible() {
+            editor_region
+        } else {
+            let rail = super::sidebar::render_navigation_rail(self, palette, cx);
+            let workspace = if sidebar_mode.has_panel() {
+                let sidebar = super::sidebar::render(self, window, palette, cx);
+                let settings = self.settings.clone();
+                let view = cx.entity();
+                h_resizable("dopad-workspace-panels")
+                    .child(
+                        resizable_panel()
+                            .size(px(self.sidebar.width))
+                            .size_range(px(220.)..px(420.))
+                            .flex_none()
+                            .child(sidebar),
+                    )
+                    .child(resizable_panel().child(editor_region))
+                    .on_resize(move |state, _, app| {
+                        let Some(size) = state.read(app).sizes().first().copied() else {
+                            return;
+                        };
+                        let width = f32::from(size).round().clamp(220., 420.) as u16;
+                        let mut current = settings.current();
+                        if current.sidebar_width == width {
+                            return;
+                        }
+                        current.sidebar_width = width;
+                        settings.replace(current.clone());
+                        if let Some(path) = settings.path() {
+                            app.background_executor()
+                                .spawn(async move {
+                                    if let Err(error) = crate::settings::save_file(&path, &current) {
+                                        tracing::warn!(error = %error, "sidebar width could not be persisted");
+                                    }
+                                })
+                                .detach();
+                        }
+                        view.update(app, |_, cx| cx.notify());
+                    })
+                    .into_any_element()
+            } else {
+                editor_region
+            };
+            div()
+                .size_full()
+                .min_w_0()
+                .flex()
+                .child(rail)
+                .child(div().flex_1().min_w_0().size_full().child(workspace))
                 .into_any_element()
         };
         let mut content = vec![
@@ -187,6 +263,7 @@ impl Render for DopadWindow {
                     .bottom_0()
                     .child(notifications),
             )
+            .child(lsp_toast)
     }
 }
 
