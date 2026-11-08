@@ -5,8 +5,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AnyElement, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Pixels, ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, Window,
-    WindowControlArea, div, img, point, px, rgb,
+    ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, Window, WindowControlArea,
+    div, img, px, rgb,
 };
 
 use super::DopadWindow;
@@ -15,10 +15,16 @@ use crate::theme::Palette;
 #[path = "topbar/file_icon.rs"]
 mod file_icon;
 #[path = "topbar/hover_scroll.rs"]
-mod hover_scroll;
+pub(in crate::window) mod hover_scroll;
+#[path = "topbar/scroll.rs"]
+mod scroll;
+#[path = "topbar/tab_context.rs"]
+mod tab_context;
 use file_icon::tab_file_icon;
 #[path = "topbar/tab_visual.rs"]
 mod tab_visual;
+use scroll::reveal_active_tab;
+pub(in crate::window) use scroll::reveal_measured_tab;
 use tab_visual::{TabIndicator, tab_hover_background, tab_indicator, tab_padding};
 
 const TAB_INDICATOR_WIDTH: f32 = 20.;
@@ -44,6 +50,23 @@ pub(super) fn render(
         hover_scroll::HoverScrollState::default()
     });
     let view = cx.entity();
+    let resume_scheduled =
+        ui_window.use_keyed_state("dopad-close-batch-resume-scheduled", cx, |_, _| false);
+    if window.close_batch_resume && !*resume_scheduled.read(cx) {
+        resume_scheduled.update(cx, |scheduled, cx| {
+            *scheduled = true;
+            cx.notify();
+        });
+        let resume_scheduled = resume_scheduled.clone();
+        let close_view = view.clone();
+        ui_window.on_next_frame(move |window, cx| {
+            resume_scheduled.update(cx, |scheduled, _| *scheduled = false);
+            close_view.update(cx, |state, cx| {
+                state.close_batch_resume = false;
+                state.continue_close_batch(window, cx);
+            });
+        });
+    }
     reveal_active_tab(ui_window, cx, window.active, &tabs_scroll, &hover_state);
 
     let new_hover_state = hover_state.clone();
@@ -58,6 +81,7 @@ pub(super) fn render(
             this.add_blank(cx);
         }));
     let (icon_theme, icon_cache) = super::sidebar::file_icon_resources(window);
+    let tab_ids = std::sync::Arc::new(window.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>());
     let tabs = window
         .tabs
         .iter()
@@ -212,7 +236,8 @@ pub(super) fn render(
                     }
                 });
             });
-            tab.into_any_element()
+            tab_context::attach(tab, view.clone(), document.id, index, tab_ids.clone())
+                .into_any_element()
         })
         .collect::<Vec<_>>();
 
@@ -261,61 +286,6 @@ pub(super) fn render(
         ));
 
     content_layout(brand, tab_list, right_controls, palette.chrome)
-}
-
-fn reveal_active_tab<V: 'static>(
-    window: &mut Window,
-    cx: &mut Context<V>,
-    active: usize,
-    tabs_scroll: &ScrollHandle,
-    hover_state: &Entity<hover_scroll::HoverScrollState>,
-) {
-    let layout_state =
-        window.use_keyed_state("dopad-tabs-layout", cx, |_, _| None::<(usize, Pixels, f32)>);
-    let layout = (active, window.bounds().size.width, window.scale_factor());
-    let previous = *layout_state.read(cx);
-    if previous.is_some_and(|previous| previous != layout) {
-        hover_scroll::cancel(hover_state, cx);
-    }
-    let active_changed = previous.is_none_or(|(previous_active, _, _)| previous_active != active);
-    if active_changed {
-        // The scroll handle defers item reveal until the tab row has measured the
-        // current children during this frame.
-        tabs_scroll.scroll_to_item(active);
-    }
-    let viewport_changed = previous.is_some_and(|(_, previous_width, previous_scale)| {
-        previous_width != layout.1 || previous_scale != layout.2
-    });
-    if active_changed || viewport_changed {
-        // On selection, resize or DPI change, defer reveal until GPUI has fresh
-        // measurements for the viewport and tab positions.
-        let tabs_scroll = tabs_scroll.clone();
-        let view = window.current_view();
-        window.on_next_frame(move |_, cx| {
-            reveal_measured_tab(&tabs_scroll, active);
-            cx.notify(view);
-        });
-    }
-    if previous != Some(layout) {
-        layout_state.update(cx, |previous, _| *previous = Some(layout));
-    }
-}
-
-pub(super) fn reveal_measured_tab(scroll: &ScrollHandle, index: usize) {
-    let Some(tab) = scroll.bounds_for_item(index) else {
-        scroll.scroll_to_item(index);
-        return;
-    };
-    let viewport = scroll.bounds();
-    let current = scroll.offset();
-    let mut x = current.x;
-    if tab.size.width > viewport.size.width || tab.left() + x < viewport.left() {
-        x = viewport.left() - tab.left();
-    } else if tab.right() + x > viewport.right() {
-        x = viewport.right() - tab.right();
-    }
-    x = x.min(px(0.)).max(-scroll.max_offset().x);
-    scroll.set_offset(point(x, current.y));
 }
 
 fn render_tab_list<V: 'static>(
