@@ -161,7 +161,7 @@ pub fn apply(dark: bool, cx: &mut App) {
         theme.tokens.scrollbar_thumb = scrollbar_thumb.into();
         theme.tokens.scrollbar_thumb_hover = scrollbar_thumb_hover.into();
         theme.accent = rgb(colors.accent).into();
-        theme.accent_foreground = rgb(colors.canvas).into();
+        theme.accent_foreground = rgb(0xFFFFFF).into();
         theme.primary = rgb(colors.accent).into();
         theme.primary_active = rgb(colors.accent).into();
         theme.primary_hover = rgb(colors.accent).into();
