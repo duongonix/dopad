@@ -277,6 +277,7 @@ impl DopadWindow {
         else {
             return;
         };
+        self.close_lsp_document(id);
         if let Some(tab) = self.tabs.get_mut(self.active) {
             tab.content = file_view::TabContent::Loading;
             tab.loading_indicator_visible = false;
