@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
     time::Instant,
@@ -31,6 +31,7 @@ mod fonts;
 mod formatting;
 mod image_preview;
 mod language;
+mod lsp;
 mod menu;
 mod open;
 mod paths;
@@ -43,6 +44,7 @@ mod settings;
 mod shortcuts;
 mod sidebar;
 mod sync;
+mod tab_closing;
 #[path = "window/terminal_window.rs"]
 mod terminal_window;
 mod toast;
@@ -126,7 +128,10 @@ pub fn open_main(
             )
         });
         session_state::install_close_guard(window, cx, &view);
-        view.update(cx, |state, cx| state.start_auto_save_loop(cx));
+        view.update(cx, |state, cx| {
+            state.start_auto_save_loop(cx);
+            state.lsp.schedule_startup_delay(cx);
+        });
         if let Some(data_dir) = crate::settings::app_data_dir() {
             view.update(cx, |_, cx| {
                 fonts::load_cached_selected_font(
@@ -161,6 +166,7 @@ pub(crate) struct DopadWindow {
     pub last_toast_message: Option<String>,
     pub notifications: Entity<NotificationList>,
     pub(crate) updater: Entity<crate::updater::UpdateManager>,
+    lsp: lsp::LspManager,
     pub preview_cache: Option<dopad_preview::PreviewResult>,
     pub preview_list: ListState,
     pub preview_error: Option<(u64, Revision, String)>,
@@ -171,6 +177,8 @@ pub(crate) struct DopadWindow {
     pub pending_file_loads: HashSet<u64>,
     pending_formats: HashSet<u64>,
     pub pending_loading_indicators: HashMap<u64, Arc<AtomicBool>>,
+    pending_close_tabs: Option<VecDeque<u64>>,
+    close_batch_resume: bool,
     pending_highlighters: HashSet<(u64, String)>,
     cli_open_states: HashMap<u64, cli::CliOpenState>,
     pending_cli_requests: Vec<crate::cli_ipc::UiMessage>,
@@ -200,7 +208,9 @@ pub(crate) struct DopadWindow {
     suppress_ui_sync: Option<u64>,
     last_auto_save: Instant,
     last_external_check: Instant,
-    terminal_window: Option<(AnyWindowHandle, Entity<terminal_window::TerminalWindow>)>,
+    terminal_panel: Option<Entity<terminal_window::TerminalWindow>>,
+    terminal_visible: bool,
+    terminal_height: f32,
 }
 
 impl DopadWindow {
@@ -237,6 +247,7 @@ impl DopadWindow {
             last_toast_message: None,
             notifications,
             updater,
+            lsp: lsp::LspManager::default(),
             preview_cache: None,
             preview_list: ListState::new(0, ListAlignment::Top, px(240.)),
             preview_error: None,
@@ -247,6 +258,8 @@ impl DopadWindow {
             pending_file_loads: HashSet::new(),
             pending_formats: HashSet::new(),
             pending_loading_indicators: HashMap::new(),
+            pending_close_tabs: None,
+            close_batch_resume: false,
             pending_highlighters: HashSet::new(),
             cli_open_states: HashMap::new(),
             pending_cli_requests: Vec::new(),
@@ -271,40 +284,81 @@ impl DopadWindow {
             suppress_ui_sync: None,
             last_auto_save: Instant::now(),
             last_external_check: Instant::now(),
-            terminal_window: None,
+            terminal_panel: None,
+            terminal_visible: false,
+            terminal_height: terminal_window::TERMINAL_PANEL_DEFAULT_HEIGHT,
         }
     }
 
-    pub(super) fn open_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((handle, _)) = self.terminal_window.as_ref() {
-            if handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-            {
-                return;
-            }
-            self.terminal_window = None;
+    pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_visible {
+            self.hide_terminal(window, cx);
+            return;
         }
 
-        let cwd = sidebar::root_folder(&self.sidebar)
-            .or_else(|| {
-                self.active_tab()
-                    .and_then(|tab| tab.path.as_deref()?.parent())
-                    .map(PathBuf::from)
-            })
-            .filter(|path| path.is_dir())
-            .or_else(|| {
-                std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-                    .map(PathBuf::from)
-            })
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        match terminal_window::open(window, cx, self.settings.clone(), cwd) {
-            Ok(terminal) => self.terminal_window = Some(terminal),
-            Err(error) => {
-                self.set_status(format!("Could not open Terminal: {error:#}"));
-                cx.notify();
-            }
+        self.terminal_visible = true;
+        let bounds = window.bounds();
+        let settings = self.settings.current();
+        self.terminal_height = terminal_window::clamp_panel_height(
+            self.terminal_height,
+            f32::from(bounds.size.height),
+            settings.show_status_bar,
+        );
+        let sidebar_width = (if self.sidebar.mode.is_visible() {
+            48.
+        } else {
+            0.
+        }) + if self.sidebar.mode.has_panel() {
+            self.sidebar.width
+        } else {
+            0.
+        };
+        let panel_width = (f32::from(bounds.size.width) - sidebar_width).max(1.);
+        let panel_height = self.terminal_height;
+
+        let is_new = self.terminal_panel.is_none();
+        if is_new {
+            let cwd = sidebar::root_folder(&self.sidebar)
+                .or_else(|| {
+                    self.active_tab()
+                        .and_then(|tab| tab.path.as_deref()?.parent())
+                        .map(PathBuf::from)
+                })
+                .filter(|path| path.is_dir())
+                .or_else(|| {
+                    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                        .map(PathBuf::from)
+                })
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let settings = self.settings.clone();
+            let parent = cx.entity().downgrade();
+            let terminal =
+                cx.new(|cx| terminal_window::TerminalWindow::new(settings, cwd, parent, cx));
+            self.terminal_panel = Some(terminal);
         }
+        if let Some(terminal) = self.terminal_panel.as_ref().cloned() {
+            terminal.update(cx, |terminal, cx| {
+                terminal.configure_for_panel(panel_width, panel_height, window);
+                if is_new {
+                    terminal.discover_and_start(cx);
+                }
+            });
+            window.on_next_frame(move |window, cx| {
+                terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+            });
+        }
+        cx.notify();
+    }
+
+    pub(super) fn hide_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.terminal_visible {
+            return;
+        }
+        self.terminal_visible = false;
+        if let Some(editor) = self.active_tab().and_then(|tab| tab.ui.as_ref()).cloned() {
+            editor.update(cx, |editor, cx| editor.focus(window, cx));
+        }
+        cx.notify();
     }
 
     pub(super) fn active_tab(&self) -> Option<&DocumentTab> {
@@ -365,13 +419,8 @@ impl DopadWindow {
     }
 
     pub(super) fn refresh_terminal(&self, cx: &mut Context<Self>) {
-        if let Some((handle, terminal_view)) = self.terminal_window.as_ref() {
-            let terminal_view = terminal_view.clone();
-            let _ = handle.update(cx, |_, terminal_window, app| {
-                terminal_view.update(app, |terminal, cx| {
-                    terminal.settings_changed(terminal_window, cx)
-                });
-            });
+        if let Some(terminal) = self.terminal_panel.as_ref().cloned() {
+            terminal.update(cx, |_, cx| cx.notify());
         }
     }
 
@@ -453,9 +502,18 @@ impl DopadWindow {
         };
 
         let old_selection = tab.last_selection.clone();
-        let old_len = editor.snapshot().len_bytes();
+        let old_snapshot = editor.snapshot();
+        let old_len = old_snapshot.len_bytes();
         let new_len = rope.len();
         let candidate = local_change_range(old_len, new_len, &old_selection, cursor, &selected);
+        let mut lsp_change = candidate.as_ref().and_then(|(old_range, new_range)| {
+            let (range, range_length) = lsp::range_for_snapshot(&old_snapshot, old_range.clone())?;
+            Some((
+                Some(range),
+                Some(range_length),
+                rope.slice(new_range.start..new_range.end).to_string(),
+            ))
+        });
         let applied = candidate.and_then(|(range, replacement)| {
             let inserted = rope.slice(replacement.start..replacement.end).to_string();
             let range = ByteRange::new(range.start, range.end);
@@ -478,6 +536,18 @@ impl DopadWindow {
             update_eol_after_edit(&mut tab.eol, &inserted);
         } else {
             let new_text = rope.to_string();
+            let (changed_range, replacement) = sync::minimal_diff(&old_snapshot, &new_text);
+            if let Some((range, range_length)) =
+                lsp::range_for_snapshot(&old_snapshot, changed_range.start.0..changed_range.end.0)
+            {
+                lsp_change = Some((Some(range), Some(range_length), replacement));
+            } else {
+                tracing::warn!(
+                    document_id = id,
+                    "could not convert editor fallback diff to LSP positions"
+                );
+                lsp_change = None;
+            }
             if let Err(error) = apply_minimal_diff(editor, &new_text) {
                 tracing::error!(document_id = id, error = %error, "failed to synchronize editor state");
                 self.status = format!("Could not synchronize edit: {error}");
@@ -490,6 +560,9 @@ impl DopadWindow {
         }
         if let Some(decorations) = tab.current_search_decorations.as_ref() {
             decorations.clear(cx);
+        }
+        if let Some((range, range_length, text)) = lsp_change {
+            self.sync_lsp_change(id, range, range_length, text);
         }
         if self
             .active_tab()
@@ -515,18 +588,16 @@ impl DopadWindow {
     }
 
     fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.active_tab() else { return };
-        let id = tab.id;
-        if !tab.is_dirty() || !self.settings.current().confirm_before_close {
-            self.remove_tab(id);
-            cx.notify();
+        let Some(document_id) = self.active_tab().map(|tab| tab.id) else {
             return;
-        }
-        dialogs::confirm_close_tab(window, cx, id, tab.title.clone());
+        };
+        self.request_close_tab(document_id, window, cx);
     }
 
     fn remove_tab(&mut self, id: u64) {
         if let Some(index) = self.tabs.iter().position(|tab| tab.id == id) {
+            self.close_lsp_document(id);
+            let was_active = index == self.active;
             self.complete_cli_tab_close(id, self.tabs[index].is_dirty());
             if self
                 .search_task
@@ -548,9 +619,13 @@ impl DopadWindow {
                 apply_document_defaults(&mut tab, &self.settings.current());
                 self.tabs.push(tab);
                 self.next_id = self.next_id.saturating_add(1);
+                self.active = 0;
+            } else if was_active {
+                self.active = index.min(self.tabs.len() - 1);
+            } else if index < self.active {
+                self.active -= 1;
             }
-            let active = self.active.min(self.tabs.len().saturating_sub(1));
-            preview::activate(self, active);
+            preview::activate(self, self.active);
         }
     }
 }
