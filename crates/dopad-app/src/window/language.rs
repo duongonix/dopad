@@ -27,6 +27,7 @@ impl DopadWindow {
             self.tabs[index].detected_language
         };
         let language = override_language.unwrap_or(detected);
+        let language_changed = self.tabs[index].language() != language;
         let settings = self.settings.current();
         let large_file = settings.large_file_mode
             && editor.snapshot().len_bytes()
@@ -44,6 +45,9 @@ impl DopadWindow {
             tab.language_override = override_language;
             tab.ui.clone()
         };
+        if language_changed {
+            self.close_lsp_document(document_id);
+        }
         if language_name == "text" {
             if let Some(ui) = ui {
                 ui.update(cx, |state, cx| state.set_highlighter("text", cx));
