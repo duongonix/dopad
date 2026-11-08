@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use super::super::DopadWindow;
-use super::model::{SearchScope, SidebarMode, SidebarState};
+use super::model::{SearchScope, SidebarState};
 use crate::theme::Palette;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -188,8 +188,7 @@ pub(super) fn render(
                 .ghost()
                 .tooltip("Close Search")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.sidebar.mode = SidebarMode::Closed;
-                    cx.notify();
+                    this.close_sidebar_panel(cx);
                 })),
         );
     let options = div()
