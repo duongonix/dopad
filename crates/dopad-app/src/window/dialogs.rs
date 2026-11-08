@@ -13,16 +13,25 @@ pub(super) fn confirm_close_tab(
     cx: &mut Context<DopadWindow>,
     document_id: u64,
     title: String,
+    close_batch: bool,
 ) {
     let view = cx.entity().downgrade();
     window.open_dialog(cx, move |dialog, _, _| {
         let save_view = view.clone();
         let discard_view = view.clone();
+        let cancel_view = view.clone();
 
         let cancel = Button::new("cancel-close-tab")
             .label("Cancel")
             .ghost()
-            .on_click(|_, window, cx| window.close_dialog(cx));
+            .on_click(move |_, window, cx| {
+                window.close_dialog(cx);
+                if close_batch {
+                    let _ = cancel_view.update(cx, |view: &mut DopadWindow, _| {
+                        view.cancel_close_batch();
+                    });
+                }
+            });
         let discard = Button::new("discard-close-tab")
             .label("Don't Save")
             .danger()
@@ -33,6 +42,9 @@ pub(super) fn confirm_close_tab(
                 };
                 cx.update_entity(&discard_view, |view: &mut DopadWindow, cx| {
                     view.remove_tab(document_id);
+                    if close_batch {
+                        view.continue_close_batch(window, cx);
+                    }
                     cx.notify();
                 });
             });
