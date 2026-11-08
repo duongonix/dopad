@@ -1,4 +1,8 @@
-use gpui_kit::{Action, App, AppContext as _, Context, KeyBinding, Window};
+use std::rc::Rc;
+
+use gpui_kit::{
+    Action, App, AppContext as _, Context, KeyBinding, KeyBindingContextPredicate, Window,
+};
 
 use super::{
     CloseDocument, DopadWindow, DuplicateLine, Find, GoToLine, IgnoreShortcut, MoveLineDown,
@@ -26,6 +30,16 @@ fn load_binding<A: Action + 'static>(key: &str, action: A, cx: &App) -> anyhow::
     KeyBinding::load(key, Box::new(action), None, false, None, cx).map_err(Into::into)
 }
 
+fn load_context_binding<A: Action + 'static>(
+    key: &str,
+    action: A,
+    context: &str,
+    cx: &App,
+) -> anyhow::Result<KeyBinding> {
+    let context = Rc::new(KeyBindingContextPredicate::parse(context)?);
+    KeyBinding::load(key, Box::new(action), Some(context), false, None, cx).map_err(Into::into)
+}
+
 pub(super) fn masked_bindings(settings: &AppSettings, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
     specs()
         .iter()
@@ -35,7 +49,7 @@ pub(super) fn masked_bindings(settings: &AppSettings, cx: &App) -> anyhow::Resul
 
 pub(super) fn bindings(settings: &AppSettings, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
     let key = |id| effective_key(settings, id);
-    Ok(vec![
+    let mut bindings = vec![
         load_binding(&key("new_document"), NewDocument, cx)?,
         load_binding(&key("open_document"), OpenDocument, cx)?,
         load_binding(&key("save"), SaveDocument, cx)?,
@@ -63,7 +77,14 @@ pub(super) fn bindings(settings: &AppSettings, cx: &App) -> anyhow::Result<Vec<K
         load_binding(&key("move_line_up"), MoveLineUp, cx)?,
         load_binding(&key("move_line_down"), MoveLineDown, cx)?,
         load_binding(&key("format_document"), super::FormatDocument, cx)?,
-    ])
+    ];
+    bindings.extend(
+        specs()
+            .iter()
+            .map(|spec| load_context_binding(&key(spec.id), IgnoreShortcut, "Terminal", cx))
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    );
+    Ok(bindings)
 }
 
 impl DopadWindow {
