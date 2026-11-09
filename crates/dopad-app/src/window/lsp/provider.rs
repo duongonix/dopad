@@ -96,12 +96,17 @@ impl LspDocument {
         if self.closed.load(Ordering::Acquire) {
             return Ok(());
         }
-        let version = self
-            .version
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                Some(current.saturating_add(1))
-            })
-            .map_or(i32::MAX, |previous| previous.saturating_add(1));
+        let version = loop {
+            let current = self.version.load(Ordering::Acquire);
+            let next = current.saturating_add(1);
+            if self
+                .version
+                .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break next;
+            }
+        };
         let params = json!({
             "textDocument": { "uri": self.uri, "version": version },
             "contentChanges": [{ "range": range, "rangeLength": range_length, "text": text }]
