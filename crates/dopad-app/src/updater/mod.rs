@@ -27,6 +27,10 @@ pub(crate) struct UpdateDetails {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(
+    not(all(target_os = "windows", target_arch = "x86_64")),
+    allow(dead_code)
+)]
 pub(crate) enum UpdateState {
     NotChecked,
     Checking,
