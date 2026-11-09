@@ -1,8 +1,11 @@
 use std::{
-    io::{self, Read},
+    io::{self},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(windows)]
+use std::io::Read;
 
 #[cfg(windows)]
 use std::os::windows::io::{AsHandle, AsRawHandle};
