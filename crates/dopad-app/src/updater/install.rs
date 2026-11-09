@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 pub(crate) enum PackageLaunch {
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    #[cfg(target_os = "windows")]
     Installer(std::process::Child),
     External,
 }

@@ -27,10 +27,6 @@ pub(crate) struct UpdateDetails {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(all(target_os = "windows", target_arch = "x86_64")),
-    allow(dead_code)
-)]
 pub(crate) enum UpdateState {
     NotChecked,
     Checking,
@@ -44,9 +40,11 @@ pub(crate) enum UpdateState {
         details: UpdateDetails,
         path: std::path::PathBuf,
     },
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Installing {
         details: UpdateDetails,
     },
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Installed(UpdateDetails),
     PackageOpened(UpdateDetails),
     Failed {
@@ -276,7 +274,7 @@ impl UpdateManager {
             return;
         };
         match install::launch_verified_package(&path) {
-            #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+            #[cfg(target_os = "windows")]
             Ok(install::PackageLaunch::Installer(mut child)) => {
                 self.state = UpdateState::Installing {
                     details: details.clone(),
