@@ -401,6 +401,53 @@ impl DopadWindow {
             state.set_selected_range(offset..offset, cx);
         });
     }
+
+    pub(super) fn go_to_lsp_position(
+        &mut self,
+        line: usize,
+        utf16_column: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.active_tab() else {
+            return;
+        };
+        let Some(editor) = tab.editor.as_ref() else {
+            return;
+        };
+        let Some(state) = tab.ui.clone() else { return };
+        let snapshot = editor.snapshot();
+        let line_index = line
+            .saturating_sub(1)
+            .min(snapshot.line_count().saturating_sub(1));
+        let Ok(line_range) = snapshot.line_content_range(line_index) else {
+            return;
+        };
+        let Ok(line_text) = snapshot.slice(line_range) else {
+            return;
+        };
+        let offset = line_range
+            .start
+            .0
+            .saturating_add(utf16_column_to_byte(&line_text, utf16_column));
+        state.update(cx, |state, cx| {
+            state.set_selected_range(offset..offset, cx);
+        });
+    }
+}
+
+fn utf16_column_to_byte(text: &str, utf16_column: usize) -> usize {
+    let mut units = 0;
+    for (byte, character) in text.char_indices() {
+        if units >= utf16_column {
+            return byte;
+        }
+        let next_units = units + character.len_utf16();
+        if utf16_column < next_units {
+            return byte;
+        }
+        units = next_units;
+    }
+    text.len()
 }
 
 #[cfg(test)]
@@ -409,7 +456,18 @@ mod tests {
 
     use crate::settings::AppSettings;
 
-    use super::{choice_keys, conflicts, display_key, key_from_display};
+    use super::{choice_keys, conflicts, display_key, key_from_display, utf16_column_to_byte};
+
+    #[test]
+    fn lsp_utf16_columns_map_to_utf8_boundaries() {
+        let text = "a🙂b";
+        assert_eq!(utf16_column_to_byte(text, 0), 0);
+        assert_eq!(utf16_column_to_byte(text, 1), 1);
+        assert_eq!(utf16_column_to_byte(text, 2), 1);
+        assert_eq!(utf16_column_to_byte(text, 3), 5);
+        assert_eq!(utf16_column_to_byte(text, 4), text.len());
+        assert_eq!(utf16_column_to_byte(text, usize::MAX), text.len());
+    }
 
     #[test]
     fn shortcut_choices_round_trip_for_display_and_storage() {
@@ -449,3 +507,4 @@ mod tests {
         assert!(conflicts[0].contains("Save"));
     }
 }
+

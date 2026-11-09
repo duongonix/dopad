@@ -175,6 +175,7 @@ impl DopadWindow {
                             &self.settings.current(),
                         );
                         self.apply_pending_search_navigation(&path, cx);
+                        self.apply_pending_problem_navigation(&path, cx);
                     }
                     file_view::LoadedFileView::Image(loaded) => {
                         let file_view::LoadedImage { info, render_image } = loaded;
@@ -189,6 +190,7 @@ impl DopadWindow {
                             .unwrap_or(usize::MAX);
                         self.image_cache.insert(document_id, render_image, memory);
                         self.tabs[index] = DocumentTab::image(document_id, path.clone(), info);
+                        self.discard_pending_problem_navigation(&path);
                         super::apply_document_defaults(
                             &mut self.tabs[index],
                             &self.settings.current(),
@@ -197,6 +199,7 @@ impl DopadWindow {
                     file_view::LoadedFileView::Unsupported(info) => {
                         self.tabs[index] =
                             DocumentTab::unsupported(document_id, path.clone(), info);
+                        self.discard_pending_problem_navigation(&path);
                         super::apply_document_defaults(
                             &mut self.tabs[index],
                             &self.settings.current(),
@@ -206,6 +209,7 @@ impl DopadWindow {
                 self.record_recent_paths(vec![path.clone()], cx);
             }
             Err(error) => {
+                self.discard_pending_problem_navigation(&fallback_path);
                 self.set_status(error.message.clone());
                 self.tabs[index] = DocumentTab::error(document_id, fallback_path, error);
             }
@@ -380,3 +384,4 @@ mod tests {
         assert!(!tab.loading_indicator_visible);
     }
 }
+

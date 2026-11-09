@@ -15,6 +15,8 @@ ArchitecturesInstallIn64BitMode=x64
 OutputDir=..\..\dist\windows
 OutputBaseFilename=dopad-v{#AppVersion}-windows-x86_64-setup
 PrivilegesRequired=lowest
+CloseApplications=yes
+RestartApplications=yes
 ChangesEnvironment=yes
 ChangesAssociations=yes
 Compression=lzma2
@@ -257,3 +259,4 @@ begin
   if CurUninstallStep = usUninstall then
     RemoveCliPath;
 end;
+

@@ -17,8 +17,10 @@ use gpui_kit::{
 };
 
 mod background;
+mod bottom_panel;
 mod bracket;
 mod cli;
+mod diagnostics;
 mod dialogs;
 mod document_tab;
 mod editing;
@@ -209,8 +211,11 @@ pub(crate) struct DopadWindow {
     last_auto_save: Instant,
     last_external_check: Instant,
     terminal_panel: Option<Entity<terminal_window::TerminalWindow>>,
-    terminal_visible: bool,
-    terminal_height: f32,
+    bottom_panel: bottom_panel::BottomPanelState,
+    diagnostics: diagnostics::DiagnosticStore,
+    diagnostic_bus: diagnostics::DiagnosticBus,
+    diagnostics_listener_started: bool,
+    pending_problem_navigation: HashMap<PathBuf, (usize, usize)>,
 }
 
 impl DopadWindow {
@@ -285,80 +290,12 @@ impl DopadWindow {
             last_auto_save: Instant::now(),
             last_external_check: Instant::now(),
             terminal_panel: None,
-            terminal_visible: false,
-            terminal_height: terminal_window::TERMINAL_PANEL_DEFAULT_HEIGHT,
+            bottom_panel: bottom_panel::BottomPanelState::default(),
+            diagnostics: diagnostics::DiagnosticStore::default(),
+            diagnostic_bus: diagnostics::DiagnosticBus::default(),
+            diagnostics_listener_started: false,
+            pending_problem_navigation: HashMap::new(),
         }
-    }
-
-    pub(super) fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.terminal_visible {
-            self.hide_terminal(window, cx);
-            return;
-        }
-
-        self.terminal_visible = true;
-        let bounds = window.bounds();
-        let settings = self.settings.current();
-        self.terminal_height = terminal_window::clamp_panel_height(
-            self.terminal_height,
-            f32::from(bounds.size.height),
-            settings.show_status_bar,
-        );
-        let sidebar_width = (if self.sidebar.mode.is_visible() {
-            48.
-        } else {
-            0.
-        }) + if self.sidebar.mode.has_panel() {
-            self.sidebar.width
-        } else {
-            0.
-        };
-        let panel_width = (f32::from(bounds.size.width) - sidebar_width).max(1.);
-        let panel_height = self.terminal_height;
-
-        let is_new = self.terminal_panel.is_none();
-        if is_new {
-            let cwd = sidebar::root_folder(&self.sidebar)
-                .or_else(|| {
-                    self.active_tab()
-                        .and_then(|tab| tab.path.as_deref()?.parent())
-                        .map(PathBuf::from)
-                })
-                .filter(|path| path.is_dir())
-                .or_else(|| {
-                    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-                        .map(PathBuf::from)
-                })
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let settings = self.settings.clone();
-            let parent = cx.entity().downgrade();
-            let terminal =
-                cx.new(|cx| terminal_window::TerminalWindow::new(settings, cwd, parent, cx));
-            self.terminal_panel = Some(terminal);
-        }
-        if let Some(terminal) = self.terminal_panel.as_ref().cloned() {
-            terminal.update(cx, |terminal, cx| {
-                terminal.configure_for_panel(panel_width, panel_height, window);
-                if is_new {
-                    terminal.discover_and_start(cx);
-                }
-            });
-            window.on_next_frame(move |window, cx| {
-                terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
-            });
-        }
-        cx.notify();
-    }
-
-    pub(super) fn hide_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.terminal_visible {
-            return;
-        }
-        self.terminal_visible = false;
-        if let Some(editor) = self.active_tab().and_then(|tab| tab.ui.as_ref()).cloned() {
-            editor.update(cx, |editor, cx| editor.focus(window, cx));
-        }
-        cx.notify();
     }
 
     pub(super) fn active_tab(&self) -> Option<&DocumentTab> {
@@ -629,3 +566,4 @@ impl DopadWindow {
         }
     }
 }
+

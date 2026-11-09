@@ -1,8 +1,4 @@
-use std::{
-    ops::Range,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{ops::Range, path::PathBuf, rc::Rc};
 
 use gpui_kit::Context;
 use lsp_types::CompletionItem;
@@ -12,6 +8,15 @@ use super::{
     detect_server, language_id, persist_metadata, persistence, registry, spec_key, workspace_root,
 };
 use crate::window::{DopadWindow, file_view};
+
+struct AttachLspDocument {
+    document_id: u64,
+    language: dopad_syntax::Language,
+    path: PathBuf,
+    spec: &'static ServerSpec,
+    client: LspClient,
+    workspace: PathBuf,
+}
 
 fn completion_highlight_ranges(_: &str, _: &CompletionItem) -> Vec<Range<usize>> {
     Vec::new()
@@ -126,6 +131,7 @@ impl DopadWindow {
         binary: ServerBinary,
         cx: &mut Context<Self>,
     ) {
+        self.start_diagnostic_listener(cx);
         if !self.lsp.starting_documents.insert(document_id) {
             return;
         }
@@ -147,7 +153,17 @@ impl DopadWindow {
             if let Some(client) = existing {
                 let _ = this.update(cx, |window, cx| {
                     window.lsp.starting_documents.remove(&document_id);
-                    window.attach_lsp_document(document_id, language, &path, spec, client, cx);
+                    window.attach_lsp_document(
+                        AttachLspDocument {
+                            document_id,
+                            language,
+                            path: path.clone(),
+                            spec,
+                            client,
+                            workspace: root.clone(),
+                        },
+                        cx,
+                    );
                 });
                 return;
             }
@@ -166,9 +182,16 @@ impl DopadWindow {
             let executable = binary.executable.clone();
             let args = spec.args;
             let metadata_key = spec_key(spec);
+            let diagnostics = this
+                .update(cx, |window, _| window.diagnostic_bus.clone())
+                .unwrap_or_default();
+            let server_id = spec.id.to_owned();
             let result = executor
                 .clone()
-                .spawn(async move { LspClient::start(executable, args, &root, &executor).await })
+                .spawn(async move {
+                    LspClient::start(executable, args, &root, &executor, diagnostics, server_id)
+                        .await
+                })
                 .await;
             let abandoned_client = result.as_ref().ok().cloned();
             let updated = this.update(cx, |window, cx| {
@@ -176,6 +199,7 @@ impl DopadWindow {
                 window.lsp.starting_documents.remove(&document_id);
                 match result {
                     Ok(client) => {
+                        let client_root = key.root.clone();
                         window.lsp.clients.insert(key, client.clone());
                         let metadata = persistence::verified_now(
                             spec.id,
@@ -189,7 +213,17 @@ impl DopadWindow {
                             window.lsp.metadata.clone(),
                             cx,
                         );
-                        window.attach_lsp_document(document_id, language, &path, spec, client, cx);
+                        window.attach_lsp_document(
+                            AttachLspDocument {
+                                document_id,
+                                language,
+                                path: path.clone(),
+                                spec,
+                                client,
+                                workspace: client_root,
+                            },
+                            cx,
+                        );
                         window.dismiss_lsp_prompt(spec.id);
                         window.ensure_active_lsp(cx);
                     }
@@ -223,15 +257,15 @@ impl DopadWindow {
         .detach();
     }
 
-    fn attach_lsp_document(
-        &mut self,
-        document_id: u64,
-        language: dopad_syntax::Language,
-        path: &Path,
-        spec: &'static ServerSpec,
-        client: LspClient,
-        cx: &mut Context<Self>,
-    ) {
+    fn attach_lsp_document(&mut self, attach: AttachLspDocument, cx: &mut Context<Self>) {
+        let AttachLspDocument {
+            document_id,
+            language,
+            path,
+            spec,
+            client,
+            workspace,
+        } = attach;
         if self.lsp.documents.contains_key(&document_id) {
             return;
         }
@@ -245,15 +279,15 @@ impl DopadWindow {
             self.lsp.starting_documents.remove(&document_id);
             return;
         };
-        let uri = match url::Url::from_file_path(path) {
+        let uri = match url::Url::from_file_path(&path) {
             Ok(uri) => uri.to_string(),
             Err(_) => {
                 tracing::warn!(path = %path.display(), "LSP cannot represent this file path as a URI");
                 return;
             }
         };
-        let language_id = language_id(language, path, spec);
-        let document = LspDocument::new(client, uri, language_id);
+        let language_id = language_id(language, &path, spec);
+        let document = LspDocument::new(client, uri, language_id, spec.id.to_owned(), workspace);
         let provider = document.provider();
         let rope = ui.read(cx).text().clone();
         ui.update(cx, |state, _| {
@@ -289,7 +323,9 @@ impl DopadWindow {
     }
 
     pub(in crate::window) fn close_lsp_document(&mut self, document_id: u64) {
-        self.lsp.close_document(document_id);
+        if let Some(uri) = self.lsp.close_document(document_id) {
+            self.diagnostics.remove_uri(&uri);
+        }
     }
 }
 
@@ -308,3 +344,4 @@ mod tests {
         assert!(completion_highlight_ranges("pub", &item).is_empty());
     }
 }
+

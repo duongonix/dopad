@@ -10,7 +10,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{Anchor, Context, IntoElement, ParentElement, Styled, Window, div, px, rgb};
 
 use crate::theme::Palette;
-use crate::window::{DopadWindow, preview};
+use crate::window::{DopadWindow, bottom_panel::BottomPanelView, preview};
 use dopad_syntax::Language;
 
 const TERMINAL_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>"#;
@@ -93,21 +93,27 @@ pub(super) fn render(
                 .xsmall()
                 .compact()
                 .ghost()
-                .when(window.terminal_visible, |button| {
-                    button.text_color(rgb(palette.accent))
-                })
-                .tooltip(if window.terminal_visible {
-                    "Hide Terminal"
-                } else {
-                    "Open Terminal"
-                })
-                .accessibility_label(if window.terminal_visible {
-                    "Hide Terminal"
-                } else {
-                    "Open Terminal"
-                })
+                .when(
+                    window.bottom_panel.active == Some(BottomPanelView::Terminal),
+                    |button| button.text_color(rgb(palette.accent)),
+                )
+                .tooltip(
+                    if window.bottom_panel.active == Some(BottomPanelView::Terminal) {
+                        "Hide Terminal"
+                    } else {
+                        "Open Terminal"
+                    },
+                )
+                .accessibility_label(
+                    if window.bottom_panel.active == Some(BottomPanelView::Terminal) {
+                        "Hide Terminal"
+                    } else {
+                        "Open Terminal"
+                    },
+                )
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx))),
         )
+        .child(render_problems_shortcut(window, palette, cx))
         .child(
             Button::new("status-update")
                 .child(
@@ -249,6 +255,67 @@ pub(super) fn render(
     status.into_any_element()
 }
 
+fn render_problems_shortcut(
+    window: &DopadWindow,
+    palette: &Palette,
+    cx: &mut Context<DopadWindow>,
+) -> impl IntoElement + use<> {
+    let counts = window.current_diagnostic_counts();
+    let active = window.bottom_panel.active == Some(BottomPanelView::Problems);
+    Button::new("status-problems")
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(3.))
+                .child(
+                    Icon::new(IconName::CircleX)
+                        .with_size(Size::Size(px(14.)))
+                        .text_color(rgb(if counts.errors == 0 {
+                            palette.secondary
+                        } else {
+                            0xB04B43
+                        })),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(palette.secondary))
+                        .child(counts.errors.to_string()),
+                )
+                .child(
+                    Icon::new(IconName::TriangleAlert)
+                        .with_size(Size::Size(px(14.)))
+                        .text_color(rgb(if counts.warnings == 0 {
+                            palette.secondary
+                        } else {
+                            0x9A6A22
+                        })),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(palette.secondary))
+                        .child(counts.warnings.to_string()),
+                ),
+        )
+        .xsmall()
+        .compact()
+        .ghost()
+        .when(active, |button| {
+            button
+                .bg(rgb(palette.selection))
+                .text_color(rgb(palette.accent))
+        })
+        .tooltip(format!(
+            "Problems: {} errors, {} warnings",
+            counts.errors, counts.warnings
+        ))
+        .accessibility_label(format!(
+            "Problems, {} errors, {} warnings",
+            counts.errors, counts.warnings
+        ))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_problems(window, cx)))
+}
+
 fn render_language_menu(
     label: &'static str,
     document_id: Option<u64>,
@@ -315,3 +382,4 @@ mod tests {
         );
     }
 }
+

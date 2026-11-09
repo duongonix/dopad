@@ -40,6 +40,10 @@ pub(crate) enum UpdateState {
         details: UpdateDetails,
         path: std::path::PathBuf,
     },
+    Installing {
+        details: UpdateDetails,
+    },
+    Installed(UpdateDetails),
     PackageOpened(UpdateDetails),
     Failed {
         details: Option<UpdateDetails>,
@@ -55,6 +59,8 @@ impl UpdateState {
             Self::Available(_)
                 | Self::Downloading { .. }
                 | Self::ReadyToInstall { .. }
+                | Self::Installing { .. }
+                | Self::Installed(_)
                 | Self::PackageOpened(_)
                 | Self::Failed {
                     details: Some(_),
@@ -68,6 +74,8 @@ impl UpdateState {
             Self::Available(details)
             | Self::Downloading { details, .. }
             | Self::ReadyToInstall { details, .. }
+            | Self::Installing { details, .. }
+            | Self::Installed(details)
             | Self::PackageOpened(details) => Some(details),
             Self::Failed { details, .. } => details.as_ref(),
             Self::NotChecked | Self::Checking | Self::UpToDate => None,
@@ -79,6 +87,7 @@ pub(crate) struct UpdateManager {
     pub(crate) state: UpdateState,
     pub(crate) window: Option<AnyWindowHandle>,
     cancel: Option<Arc<AtomicBool>>,
+    download_after_check: bool,
 }
 
 impl Default for UpdateManager {
@@ -87,6 +96,7 @@ impl Default for UpdateManager {
             state: UpdateState::NotChecked,
             window: None,
             cancel: None,
+            download_after_check: false,
         }
     }
 }
@@ -110,19 +120,45 @@ impl UpdateManager {
                 .spawn(async move { check_release() })
                 .await;
             let _ = this.update(cx, |manager, cx| {
-                manager.state = match result {
-                    Ok(Some(details)) => UpdateState::Available(details),
-                    Ok(None) => UpdateState::UpToDate,
-                    Err(error) => UpdateState::Failed {
-                        details: None,
-                        message: error,
-                        retry_path: None,
-                    },
-                };
-                cx.notify();
+                let download_after_check = std::mem::take(&mut manager.download_after_check);
+                match result {
+                    Ok(Some(details)) => {
+                        manager.state = UpdateState::Available(details);
+                        if download_after_check {
+                            manager.start_download(cx);
+                        } else {
+                            cx.notify();
+                        }
+                    }
+                    Ok(None) => {
+                        manager.state = UpdateState::UpToDate;
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        manager.state = UpdateState::Failed {
+                            details: None,
+                            message: error,
+                            retry_path: None,
+                        };
+                        cx.notify();
+                    }
+                }
             });
         })
         .detach();
+    }
+
+    pub(crate) fn start_update(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.state,
+            UpdateState::Checking
+                | UpdateState::Downloading { .. }
+                | UpdateState::Installing { .. }
+        ) {
+            return;
+        }
+        self.download_after_check = true;
+        self.check(cx, true);
     }
 
     pub(crate) fn start_download(&mut self, cx: &mut Context<Self>) {
@@ -190,18 +226,32 @@ impl UpdateManager {
                 .await;
             entity.update(cx, |manager, cx| {
                 manager.cancel = None;
-                manager.state = match result {
-                    Ok(path) => UpdateState::ReadyToInstall { details, path },
-                    Err(error) if error.to_string().contains("cancelled") => {
-                        UpdateState::Available(details)
+                match result {
+                    Ok(path) => {
+                        let auto_install = install::supports_automatic_install(&path);
+                        manager.state = UpdateState::ReadyToInstall {
+                            details: details.clone(),
+                            path,
+                        };
+                        if auto_install {
+                            manager.launch_installer(cx);
+                        } else {
+                            cx.notify();
+                        }
                     }
-                    Err(error) => UpdateState::Failed {
-                        details: Some(details),
-                        message: format!("Update download or verification failed: {error:#}"),
-                        retry_path: None,
-                    },
-                };
-                cx.notify();
+                    Err(error) if error.to_string().contains("cancelled") => {
+                        manager.state = UpdateState::Available(details);
+                        cx.notify();
+                    }
+                    Err(error) => {
+                        manager.state = UpdateState::Failed {
+                            details: Some(details),
+                            message: format!("Update download or verification failed: {error:#}"),
+                            retry_path: None,
+                        };
+                        cx.notify();
+                    }
+                }
             });
         })
         .detach();
@@ -222,7 +272,58 @@ impl UpdateManager {
             return;
         };
         match install::launch_verified_package(&path) {
-            Ok(()) => self.state = UpdateState::PackageOpened(details),
+            Ok(install::PackageLaunch::Installer(mut child)) => {
+                self.state = UpdateState::Installing {
+                    details: details.clone(),
+                };
+                cx.notify();
+                let entity = cx.entity();
+                cx.spawn(async move |_, cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(250))
+                            .await;
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                entity.update(cx, |manager, cx| {
+                                    manager.state = if status.success() {
+                                        UpdateState::Installed(details)
+                                    } else {
+                                        UpdateState::Failed {
+                                            details: Some(details),
+                                            message: format!(
+                                                "The Windows installer exited with status {status}."
+                                            ),
+                                            retry_path: Some(path),
+                                        }
+                                    };
+                                    cx.notify();
+                                });
+                                break;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                entity.update(cx, |manager, cx| {
+                                    manager.state = UpdateState::Failed {
+                                        details: Some(details),
+                                        message: format!(
+                                            "Could not monitor the Windows installer: {error}"
+                                        ),
+                                        retry_path: Some(path),
+                                    };
+                                    cx.notify();
+                                });
+                                break;
+                            }
+                        }
+                    }
+                })
+                .detach();
+                return;
+            }
+            Ok(install::PackageLaunch::External) => {
+                self.state = UpdateState::PackageOpened(details)
+            }
             Err(error) => {
                 self.state = UpdateState::Failed {
                     details: Some(details),
@@ -283,3 +384,4 @@ pub(crate) fn current_version() -> &'static str {
 
 #[cfg(test)]
 mod tests;
+

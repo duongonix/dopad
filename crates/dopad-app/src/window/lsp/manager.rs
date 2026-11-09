@@ -89,11 +89,34 @@ impl LspManager {
         self.current_prompt.clone()
     }
 
-    pub(super) fn close_document(&mut self, document_id: u64) {
+    pub(super) fn close_document(&mut self, document_id: u64) -> Option<String> {
         self.starting_documents.remove(&document_id);
         if let Some(document) = self.documents.remove(&document_id) {
+            let uri = document.uri().to_owned();
             document.did_close();
+            return Some(uri);
         }
+        None
+    }
+
+    pub(in crate::window) fn current_document_version(
+        &self,
+        uri: &str,
+        server_id: &str,
+        workspace: &Path,
+    ) -> Option<i32> {
+        self.documents.values().find_map(|document| {
+            (document.uri() == uri
+                && document.server_id() == server_id
+                && document.workspace() == workspace)
+                .then(|| document.version())
+        })
+    }
+
+    pub(in crate::window) fn active_workspace(&self, document_id: u64) -> Option<&Path> {
+        self.documents
+            .get(&document_id)
+            .map(|document| document.workspace().as_path())
     }
 
     fn next_prompt(&mut self) {
@@ -319,3 +342,4 @@ mod lsp_detection_tests {
         assert_eq!(binary.source, "system PATH");
     }
 }
+

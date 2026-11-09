@@ -7,8 +7,8 @@ use gpui_kit::{
 };
 
 use super::{
-    DopadWindow, ResetZoom, TogglePreview, ToggleWrap, ZoomIn, ZoomOut, session_state,
-    terminal_window,
+    DopadWindow, ResetZoom, TogglePreview, ToggleWrap, ZoomIn, ZoomOut, bottom_panel,
+    session_state, terminal_window,
 };
 use crate::theme;
 
@@ -27,6 +27,15 @@ impl Render for DopadWindow {
         self.ensure_active_lsp(cx);
         self.ensure_preview(cx);
         self.ensure_active_image(cx);
+        match self.bottom_panel.active {
+            Some(bottom_panel::BottomPanelView::Terminal) => {
+                self.ensure_terminal(Some(window), cx);
+            }
+            Some(bottom_panel::BottomPanelView::Problems) => {
+                self.ensure_problem_filter(Some(window), cx);
+            }
+            Some(bottom_panel::BottomPanelView::Output) | None => {}
+        }
 
         let palette = theme::palette(self.dark_theme);
         super::toast::push_current_status(self, window, palette, cx);
@@ -38,58 +47,73 @@ impl Render for DopadWindow {
         let sidebar_mode = self.sidebar.mode;
         let bounds = window.bounds();
         let show_status_bar = self.settings.current().show_status_bar;
-        let max_terminal_height =
+        let max_panel_height =
             terminal_window::max_panel_height(f32::from(bounds.size.height), show_status_bar);
-        self.terminal_height = self.terminal_height.clamp(
-            terminal_window::TERMINAL_PANEL_MIN_HEIGHT,
-            max_terminal_height,
-        );
+        self.bottom_panel.height = self
+            .bottom_panel
+            .height
+            .clamp(terminal_window::TERMINAL_PANEL_MIN_HEIGHT, max_panel_height);
         let left_width = (if sidebar_mode.is_visible() { 48. } else { 0. })
             + if sidebar_mode.has_panel() {
                 self.sidebar.width
             } else {
                 0.
             };
-        let terminal_width = (f32::from(bounds.size.width) - left_width).max(1.);
-        if self.terminal_visible
+        let panel_width = (f32::from(bounds.size.width) - left_width).max(1.);
+        if self
+            .bottom_panel
+            .is_active(bottom_panel::BottomPanelView::Terminal)
             && let Some(terminal) = self.terminal_panel.as_ref().cloned()
         {
-            let terminal_height = self.terminal_height;
+            let panel_height = self.bottom_panel.height;
             terminal.update(cx, |terminal, _| {
-                terminal.configure_for_panel(terminal_width, terminal_height, window)
+                terminal.configure_for_panel(panel_width, panel_height, window)
             });
         }
 
         let mut editor_region = body.element;
-        if self.terminal_visible
-            && let Some(terminal) = self.terminal_panel.as_ref().cloned()
-        {
-            let terminal_height = self.terminal_height;
-            let terminal_min = terminal_window::TERMINAL_PANEL_MIN_HEIGHT;
-            let terminal_max = max_terminal_height;
-            let view = cx.entity();
-            editor_region = v_resizable("dopad-editor-terminal-panels")
-                .child(resizable_panel().child(editor_region))
-                .child(
-                    resizable_panel()
-                        .size(px(terminal_height))
-                        .size_range(px(terminal_min)..px(terminal_max))
-                        .flex_none()
-                        .child(terminal),
-                )
-                .on_resize(move |state, _, app| {
-                    let Some(size) = state.read(app).sizes().last().copied() else {
-                        return;
-                    };
-                    let height = f32::from(size).round().clamp(terminal_min, terminal_max);
-                    view.update(app, |this, cx| {
-                        if (this.terminal_height - height).abs() > 0.5 {
-                            this.terminal_height = height;
-                            cx.notify();
-                        }
-                    });
-                })
-                .into_any_element();
+        if let Some(panel_view) = self.bottom_panel.active {
+            let panel = match panel_view {
+                bottom_panel::BottomPanelView::Terminal => self
+                    .terminal_panel
+                    .as_ref()
+                    .cloned()
+                    .map(|terminal| terminal.into_any_element()),
+                bottom_panel::BottomPanelView::Problems => {
+                    Some(bottom_panel::render_problems(self, *palette, cx))
+                }
+                bottom_panel::BottomPanelView::Output => {
+                    Some(bottom_panel::render_output(self, *palette, cx))
+                }
+            };
+            if let Some(panel) = panel {
+                let panel_height = self.bottom_panel.height;
+                let panel_min = terminal_window::TERMINAL_PANEL_MIN_HEIGHT;
+                let panel_max = max_panel_height;
+                let view = cx.entity();
+                editor_region = v_resizable("dopad-editor-bottom-panels")
+                    .child(resizable_panel().child(editor_region))
+                    .child(
+                        resizable_panel()
+                            .size(px(panel_height))
+                            .size_range(px(panel_min)..px(panel_max))
+                            .flex_none()
+                            .child(panel),
+                    )
+                    .on_resize(move |state, _, app| {
+                        let Some(size) = state.read(app).sizes().last().copied() else {
+                            return;
+                        };
+                        let height = f32::from(size).round().clamp(panel_min, panel_max);
+                        view.update(app, |this, cx| {
+                            if (this.bottom_panel.height - height).abs() > 0.5 {
+                                this.bottom_panel.height = height;
+                                cx.notify();
+                            }
+                        });
+                    })
+                    .into_any_element();
+            }
         }
 
         let body_region = if !sidebar_mode.is_visible() {
@@ -282,3 +306,4 @@ impl DopadWindow {
         }
     }
 }
+

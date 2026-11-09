@@ -166,7 +166,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Validate artifacts and create draft release
+    name: Validate artifacts and publish release
     needs: [package]
     runs-on: ubuntu-24.04
     permissions:
@@ -227,6 +227,7 @@ jobs:
           name: Dopad ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           draft: false
-          generate_release_notes: true
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           files: dist/release/*
           fail_on_unmatched_files: true
+

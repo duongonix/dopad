@@ -10,15 +10,14 @@ use gpui_kit::{
     ParentElement, Render, Styled, Window, WindowControlArea, div, img, px, rgb,
 };
 
+use super::DopadWindow;
 use crate::{
     settings::{SettingsService, save_file},
     theme::{self, Palette},
     updater::{UpdateManager, UpdateState},
 };
-use gpui_kit::component::Disableable;
-
-use super::DopadWindow;
 mod about;
+mod actions;
 mod lifecycle;
 mod progress;
 
@@ -89,9 +88,9 @@ impl UpdateWindow {
             .update(cx, |manager, cx| manager.check(cx, force));
     }
 
-    fn start_download(&mut self, cx: &mut Context<Self>) {
+    fn start_update(&mut self, cx: &mut Context<Self>) {
         self.updater
-            .update(cx, |manager, cx| manager.start_download(cx));
+            .update(cx, |manager, cx| manager.start_update(cx));
     }
 
     fn cancel_download(&mut self, cx: &mut Context<Self>) {
@@ -136,7 +135,7 @@ impl Render for UpdateWindow {
             .label("Automatically check for updates")
             .checked(settings.auto_check_updates)
             .on_change(cx.listener(|this, value, _, cx| this.set_auto_check_updates(*value, cx)));
-        let button_row = render_footer_buttons(&state, cx);
+        let button_row = actions::render_footer_buttons(&state, cx);
         let download_line = progress::download_description(&state);
 
         let header = div()
@@ -249,6 +248,12 @@ fn render_description(state: &UpdateState, palette: &Palette) -> impl IntoElemen
         UpdateState::ReadyToInstall { .. } => {
             "The download finished and its signature and SHA-256 digest were verified.".to_owned()
         }
+        UpdateState::Installing { .. } => {
+            "The verified update is being installed. Dopad will restart when installation finishes.".to_owned()
+        }
+        UpdateState::Installed(_) => {
+            "The update was installed. Dopad is starting the updated version.".to_owned()
+        }
         UpdateState::PackageOpened(_) => {
             "The verified package was opened. Complete any installation or extraction, then restart Dopad.".to_owned()
         }
@@ -332,6 +337,8 @@ fn render_body(
         UpdateState::Available(_)
         | UpdateState::Downloading { .. }
         | UpdateState::ReadyToInstall { .. }
+        | UpdateState::Installing { .. }
+        | UpdateState::Installed(_)
         | UpdateState::PackageOpened(_) => String::new(),
     };
     div()
@@ -345,96 +352,6 @@ fn render_body(
         .text_color(rgb(palette.secondary))
         .child(message)
         .into_any_element()
-}
-
-fn render_footer_buttons(state: &UpdateState, cx: &mut Context<UpdateWindow>) -> impl IntoElement {
-    let retry_entity = cx.entity();
-    let later = Button::new("update-remind-later")
-        .label("Remind Me Later")
-        .outline()
-        .on_click(cx.listener(|_, _, window, _| window.remove_window()));
-    let action = match state {
-        UpdateState::Available(details)
-            if details.package.is_some() && details.signing_key_available =>
-        {
-            Button::new("update-now")
-                .icon(IconName::Download)
-                .label("Update Now")
-                .primary()
-                .text_color(rgb(0xFFFFFF))
-                .on_click(cx.listener(|this, _, _, cx| this.start_download(cx)))
-        }
-        UpdateState::Downloading { .. } => Button::new("update-cancel")
-            .label("Cancel")
-            .outline()
-            .on_click(cx.listener(|this, _, _, cx| this.cancel_download(cx))),
-        UpdateState::ReadyToInstall { .. } => Button::new("update-install")
-            .icon(IconName::Download)
-            .label("Open Verified Package")
-            .primary()
-            .text_color(rgb(0xFFFFFF))
-            .on_click(cx.listener(|this, _, _, cx| this.launch_package(cx))),
-        UpdateState::NotChecked | UpdateState::Failed { details: None, .. } => {
-            Button::new("update-retry-check")
-                .label("Check for Updates")
-                .outline()
-                .on_click(move |_, _, cx| {
-                    retry_entity.update(cx, |this, cx| this.start_check(true, cx));
-                })
-        }
-        UpdateState::Failed {
-            retry_path: Some(_),
-            ..
-        } => Button::new("update-retry-package-open")
-            .label("Open Verified Package Again")
-            .outline()
-            .on_click(move |_, _, cx| {
-                retry_entity.update(cx, |this, cx| {
-                    this.updater
-                        .update(cx, |manager, cx| manager.retry_package_open(cx));
-                });
-            }),
-        UpdateState::Failed {
-            details: Some(details),
-            ..
-        } if details.package.is_some() && details.signing_key_available => {
-            let details = details.clone();
-            Button::new("update-retry-download")
-                .label("Retry Download")
-                .outline()
-                .on_click(move |_, _, cx| {
-                    retry_entity.update(cx, |this, cx| {
-                        this.updater.update(cx, |manager, cx| {
-                            manager.state = UpdateState::Available(details.clone());
-                            manager.start_download(cx);
-                        });
-                    });
-                })
-        }
-        UpdateState::UpToDate | UpdateState::Checking | UpdateState::PackageOpened(_) => {
-            Button::new("update-check-again")
-                .label(if matches!(state, UpdateState::Checking) {
-                    "Checking…"
-                } else {
-                    "Check Again"
-                })
-                .outline()
-                .disabled(matches!(state, UpdateState::Checking))
-                .on_click(move |_, _, cx| {
-                    retry_entity.update(cx, |this, cx| this.start_check(true, cx));
-                })
-        }
-        UpdateState::Available(_) | UpdateState::Failed { .. } => Button::new("update-unavailable")
-            .label("View Release")
-            .outline()
-            .on_click(cx.listener(|this, _, _, cx| this.open_release_page(cx))),
-    };
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(later)
-        .child(action)
 }
 
 fn release_link(url: &str, palette: &Palette) -> impl IntoElement {
@@ -487,3 +404,4 @@ impl DopadWindow {
         }
     }
 }
+

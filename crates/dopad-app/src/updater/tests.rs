@@ -34,5 +34,20 @@ fn known_update_keeps_the_footer_indicator_through_package_handoff() {
     };
 
     assert!(UpdateState::Available(details.clone()).has_update());
+    assert!(
+        UpdateState::Installing {
+            details: details.clone(),
+        }
+        .has_update()
+    );
+    assert_eq!(
+        UpdateState::Installing {
+            details: details.clone(),
+        }
+        .details()
+        .map(|details| details.release.tag.as_str()),
+        Some("v1.2.3")
+    );
     assert!(UpdateState::PackageOpened(details).has_update());
 }
+

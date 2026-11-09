@@ -19,7 +19,8 @@ pub fn initialize() {
     let (filter_layer, handle) = reload::Layer::new(filter);
     let subscriber = tracing_subscriber::registry()
         .with(filter_layer)
-        .with(tracing_subscriber::fmt::layer());
+        .with(tracing_subscriber::fmt::layer())
+        .with(crate::output::OutputLogLayer);
 
     match subscriber.try_init() {
         Ok(()) => {
@@ -37,3 +38,4 @@ pub fn set_level(level: &str) -> Result<(), String> {
         .ok_or_else(|| "logging subscriber is not initialized".to_owned())?;
     handle.reload(filter).map_err(|error| error.to_string())
 }
+

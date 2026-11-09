@@ -112,6 +112,8 @@ pub(super) fn download_description(state: &UpdateState) -> String {
                 )
             },
         ),
+        UpdateState::Installing { .. } => "Installing the verified update…".into(),
+        UpdateState::Installed(_) => "Update installed · restarting Dopad".into(),
         UpdateState::PackageOpened(_) => "Apply the package, then restart Dopad.".into(),
         UpdateState::NotChecked | UpdateState::Checking | UpdateState::UpToDate => {
             format!("Current version: v{}", current_version())
@@ -130,3 +132,4 @@ mod tests {
         assert_eq!(format_bytes(1_048_576), "1.0 MB");
     }
 }
+

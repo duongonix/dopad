@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -27,6 +28,8 @@ const INLINE_TIMEOUT: Duration = Duration::from_secs(2);
 pub(super) struct LspDocument {
     client: LspClient,
     uri: String,
+    server_id: String,
+    workspace: PathBuf,
     language_id: String,
     version: Arc<AtomicI32>,
     ready: Arc<AtomicBool>,
@@ -37,11 +40,19 @@ pub(super) struct LspDocument {
 }
 
 impl LspDocument {
-    pub(super) fn new(client: LspClient, uri: String, language_id: String) -> Self {
+    pub(super) fn new(
+        client: LspClient,
+        uri: String,
+        language_id: String,
+        server_id: String,
+        workspace: PathBuf,
+    ) -> Self {
         let (ready_sender, ready_signal) = async_channel::bounded(1);
         Self {
             client,
             uri,
+            server_id,
+            workspace,
             language_id,
             version: Arc::new(AtomicI32::new(1)),
             ready: Arc::new(AtomicBool::new(false)),
@@ -50,6 +61,22 @@ impl LspDocument {
             ready_signal,
             ready_sender,
         }
+    }
+
+    pub(super) fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    pub(super) fn server_id(&self) -> &str {
+        &self.server_id
+    }
+
+    pub(super) fn workspace(&self) -> &PathBuf {
+        &self.workspace
+    }
+
+    pub(super) fn version(&self) -> i32 {
+        self.version.load(Ordering::Acquire)
     }
 
     pub(super) fn provider(&self) -> Rc<dyn CompletionProvider> {
@@ -428,3 +455,4 @@ mod tests {
         assert_eq!(length, 3);
     }
 }
+

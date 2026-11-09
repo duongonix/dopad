@@ -9,6 +9,7 @@ use gpui_kit::{
     ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 
+use super::super::bottom_panel::{BottomPanelView, view_selector};
 use super::super::topbar::hover_scroll;
 use super::output::render_output;
 use super::{TERMINAL_ICON, TerminalWindow};
@@ -261,13 +262,12 @@ fn render_topbar(
                 .flex()
                 .items_center()
                 .pl(px(4.))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(palette.secondary))
-                        .child("TERMINAL"),
-                ),
+                .child(view_selector(
+                    terminal.parent.clone(),
+                    BottomPanelView::Terminal,
+                    *palette,
+                    "terminal-view-selector",
+                )),
         )
         .child(tabs)
         .child(right)
@@ -283,3 +283,4 @@ fn fixed_control(button: impl IntoElement) -> Div {
         .justify_center()
         .child(button)
 }
+

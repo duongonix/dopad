@@ -6,6 +6,7 @@ mod error;
 mod icon;
 mod icon_theme;
 mod logging;
+mod output;
 mod process;
 mod session;
 mod settings;
@@ -15,3 +16,4 @@ mod updater;
 mod window;
 
 pub use app::run;
+

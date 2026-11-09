@@ -19,6 +19,8 @@ use futures_lite::{
 use gpui_kit::BackgroundExecutor;
 use serde_json::{Value, json};
 
+use crate::window::diagnostics::{DiagnosticBus, DiagnosticUpdate};
+
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -38,6 +40,8 @@ impl LspClient {
         args: &[&str],
         root: &Path,
         executor: &BackgroundExecutor,
+        diagnostics: DiagnosticBus,
+        server_id: String,
     ) -> anyhow::Result<Self> {
         let root_uri = url::Url::from_file_path(root)
             .map_err(|_| anyhow!("workspace path cannot be represented as a file URI"))?
@@ -76,7 +80,15 @@ impl LspClient {
         };
         executor.spawn(writer_loop(stdin, outgoing_rx)).detach();
         executor
-            .spawn(reader_loop(stdout, outgoing, pending, root_uri.clone()))
+            .spawn(reader_loop(
+                stdout,
+                outgoing,
+                pending,
+                root_uri.clone(),
+                diagnostics,
+                server_id,
+                root.to_path_buf(),
+            ))
             .detach();
         executor.spawn(stderr_loop(stderr)).detach();
         executor
@@ -321,6 +333,9 @@ async fn reader_loop(
     outgoing: async_channel::Sender<Value>,
     pending: PendingRequests,
     root_uri: String,
+    diagnostics: DiagnosticBus,
+    server_id: String,
+    workspace: PathBuf,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -347,11 +362,26 @@ async fn reader_loop(
             {
                 let _ = sender.try_send(message);
             }
+        } else if message.get("method").and_then(Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && let Some(params) = message.get("params")
+        {
+            match serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(params.clone()) {
+                Ok(params) => diagnostics.publish(DiagnosticUpdate {
+                    workspace: workspace.clone(),
+                    server_id: server_id.clone(),
+                    params,
+                }),
+                Err(error) => {
+                    tracing::warn!(error = %error, "invalid LSP diagnostics notification")
+                }
+            }
         }
     }
     if let Ok(mut requests) = pending.lock() {
         requests.clear();
     }
+    diagnostics.server_stopped(workspace, server_id);
 }
 
 fn client_request_result(method: &str, message: &Value, root_uri: &str) -> Result<Value, String> {
@@ -470,3 +500,4 @@ mod tests {
         );
     }
 }
+
