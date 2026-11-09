@@ -54,7 +54,7 @@ const TYPESCRIPT: ServerSpec = ServerSpec {
     args: &["--stdio"],
     version_args: &["--version"],
     method: InstallMethod::Npm,
-    package: "typescript typescript-language-server",
+    package: "typescript@6.0.3 typescript-language-server@6.0.3",
     manual_url: "https://github.com/typescript-language-server/typescript-language-server",
 };
 
@@ -102,7 +102,7 @@ const HTML: ServerSpec = ServerSpec {
     args: &["--stdio"],
     version_args: &["--version"],
     method: InstallMethod::Npm,
-    package: "vscode-langservers-extracted",
+    package: "vscode-langservers-extracted@4.10.0",
     manual_url: "https://github.com/hrsh7th/vscode-langservers-extracted",
 };
 
@@ -114,7 +114,7 @@ const CSS: ServerSpec = ServerSpec {
     args: &["--stdio"],
     version_args: &["--version"],
     method: InstallMethod::Npm,
-    package: "vscode-langservers-extracted",
+    package: "vscode-langservers-extracted@4.10.0",
     manual_url: "https://github.com/hrsh7th/vscode-langservers-extracted",
 };
 
@@ -126,7 +126,7 @@ const JSON: ServerSpec = ServerSpec {
     args: &["--stdio"],
     version_args: &["--version"],
     method: InstallMethod::Npm,
-    package: "vscode-langservers-extracted",
+    package: "vscode-langservers-extracted@4.10.0",
     manual_url: "https://github.com/hrsh7th/vscode-langservers-extracted",
 };
 
@@ -197,27 +197,7 @@ pub(super) fn install_command(spec: &ServerSpec, data_dir: &Path) -> Option<Inst
                 strings(["component", "add", "rust-analyzer"]),
                 None,
             ),
-            InstallMethod::Npm => {
-                let prefix = install_root.join("npm");
-                let mut args = vec![
-                    "install".into(),
-                    "--prefix".into(),
-                    prefix.as_os_str().to_owned(),
-                    "--no-audit".into(),
-                    "--no-fund".into(),
-                    "--progress=false".into(),
-                ];
-                args.extend(spec.package.split_whitespace().map(OsString::from));
-                let binary = prefix
-                    .join("node_modules")
-                    .join(".bin")
-                    .join(if cfg!(windows) {
-                        format!("{}.cmd", spec.executable)
-                    } else {
-                        spec.executable.to_owned()
-                    });
-                ("npm", args, Some(binary))
-            }
+            InstallMethod::Npm => return None,
             InstallMethod::PythonPip => (
                 "python",
                 strings(["-m", "pip", "install", "--user", "basedpyright"]),

@@ -20,7 +20,7 @@ pub(in crate::window) fn render_install_toast(
     let view = cx.entity().downgrade();
     let installing = matches!(
         prompt.phase,
-        PromptPhase::Installing | PromptPhase::Starting
+        PromptPhase::Installing { .. } | PromptPhase::Starting
     );
     let cancel_view = view.clone();
     let cancel = Button::new("lsp-install-dismiss")
@@ -57,7 +57,7 @@ pub(in crate::window) fn render_install_toast(
                 )
                 .into_any_element()
         }
-        PromptPhase::Installing | PromptPhase::Starting => div().into_any_element(),
+        PromptPhase::Installing { .. } | PromptPhase::Starting => div().into_any_element(),
         PromptPhase::Manual => {
             let guide_view = view.clone();
             div()
@@ -79,11 +79,24 @@ pub(in crate::window) fn render_install_toast(
         }
         PromptPhase::Error(_) => {
             let retry_view = view.clone();
+            let logs_view = view.clone();
             div()
                 .flex()
                 .justify_end()
                 .gap(px(8.))
                 .child(cancel)
+                .child(
+                    Button::new("lsp-install-view-logs")
+                        .label("View Logs")
+                        .ghost()
+                        .on_click(move |_, _, cx| {
+                            if let Some(view) = logs_view.upgrade() {
+                                cx.update_entity(&view, |window: &mut DopadWindow, cx| {
+                                    window.show_lsp_output(cx);
+                                });
+                            }
+                        }),
+                )
                 .child(
                     Button::new("lsp-install-retry")
                         .label("Retry")
@@ -153,26 +166,41 @@ fn phase_details(prompt: &InstallPrompt, secondary: u32, accent: u32) -> Vec<gpu
                     .into_any_element(),
             ]
         }
-        PromptPhase::Installing | PromptPhase::Starting => {
-            let status = if matches!(prompt.phase, PromptPhase::Starting) {
-                format!("Starting and verifying {}…", prompt.spec.name)
-            } else {
-                format!("Installing {}…", prompt.spec.name)
-            };
-            vec![
-                Progress::new("lsp-install-progress")
+        PromptPhase::Installing { message, progress } => {
+            let bar = match progress {
+                Some(fraction) => Progress::new("lsp-install-progress")
+                    .accessibility_label(format!("Installing {}", prompt.spec.name))
+                    .color(rgb(accent))
+                    .value(fraction * 100.)
+                    .w_full(),
+                None => Progress::new("lsp-install-progress")
                     .accessibility_label(format!("Installing {}", prompt.spec.name))
                     .color(rgb(accent))
                     .loading(true)
-                    .w_full()
-                    .into_any_element(),
+                    .w_full(),
+            };
+            vec![
+                bar.into_any_element(),
                 div()
                     .text_size(px(12.))
                     .text_color(rgb(secondary))
-                    .child(status)
+                    .child(message.clone())
                     .into_any_element(),
             ]
         }
+        PromptPhase::Starting => vec![
+            Progress::new("lsp-install-progress")
+                .accessibility_label(format!("Starting {}", prompt.spec.name))
+                .color(rgb(accent))
+                .loading(true)
+                .w_full()
+                .into_any_element(),
+            div()
+                .text_size(px(12.))
+                .text_color(rgb(secondary))
+                .child(format!("Starting and verifying {}…", prompt.spec.name))
+                .into_any_element(),
+        ],
         PromptPhase::Manual => vec![
             div()
                 .text_size(px(12.))

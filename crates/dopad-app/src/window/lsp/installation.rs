@@ -1,34 +1,68 @@
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    ffi::OsString,
+    fs,
+    path::{Component, Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use anyhow::{Context as _, anyhow};
-use async_process::{Child, ChildStderr, ChildStdout};
-use futures_lite::{
-    future::{race, zip},
-    io::{AsyncRead, AsyncReadExt},
-};
 use gpui_kit::BackgroundExecutor;
 
-use super::{client::command_for, registry};
+use super::{client::command_for, client::command_for_os, registry};
+
+#[path = "installation/node_runtime.rs"]
+mod node_runtime;
+mod process;
+#[cfg(test)]
+#[path = "installation/tests.rs"]
+mod tests;
+
+use process::{ProcessOutput, run_child};
 
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const VERIFY_TIMEOUT: Duration = Duration::from_secs(8);
-const MAX_CAPTURE_BYTES: usize = 4096;
+
+#[derive(Clone, Debug)]
+pub(super) struct InstallProgress {
+    pub message: String,
+    pub fraction: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct InstalledServer {
+    pub executable: PathBuf,
+    pub args: Vec<OsString>,
+    pub version: String,
+    pub runtime_version: Option<String>,
+    pub source: String,
+}
+
+pub(super) fn report_progress(
+    sender: &async_channel::Sender<InstallProgress>,
+    message: &str,
+    fraction: Option<f32>,
+) {
+    let _ = sender.try_send(InstallProgress {
+        message: message.chars().take(160).collect(),
+        fraction: fraction.map(|value| value.clamp(0.0, 1.0)),
+    });
+}
 
 pub(super) async fn install(
     spec: &'static registry::ServerSpec,
     data_dir: PathBuf,
     cancel: async_channel::Receiver<()>,
+    progress: async_channel::Sender<InstallProgress>,
     executor: &BackgroundExecutor,
-) -> anyhow::Result<(PathBuf, String)> {
+) -> anyhow::Result<InstalledServer> {
+    if spec.method == registry::InstallMethod::Npm {
+        return install_npm(spec, data_dir, cancel, progress, executor).await;
+    }
     let plan = registry::install_command(spec, &data_dir)
         .ok_or_else(|| anyhow!("{} does not have a safe automatic installer", spec.name))?;
-    let string_args = plan
-        .args
-        .iter()
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    let argument_refs = string_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let mut command = command_for(&plan.program, &argument_refs)?;
+    report_progress(&progress, "Installing language server", None);
+    let mut command = command_for_os(&plan.program, &plan.args)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -88,7 +122,14 @@ pub(super) async fn install(
                 spec.executable
             )
         })?;
-    let version = verify_version(&executable, spec.version_args, executor)
+    let launch_args = spec.args.iter().map(OsString::from).collect::<Vec<_>>();
+    let version_args = spec
+        .version_args
+        .iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
+    report_progress(&progress, "Verifying installed language server", None);
+    let version = verify_version(&executable, &version_args, executor)
         .await
         .map_err(|error| {
             tracing::debug!(
@@ -99,7 +140,154 @@ pub(super) async fn install(
             );
             anyhow!("{} was installed but could not be verified", spec.name)
         })?;
-    Ok((executable, version))
+    Ok(InstalledServer {
+        executable,
+        args: launch_args,
+        version,
+        runtime_version: None,
+        source: format!("installed via {:?}", spec.method),
+    })
+}
+
+async fn install_npm(
+    spec: &'static registry::ServerSpec,
+    data_dir: PathBuf,
+    cancel: async_channel::Receiver<()>,
+    progress: async_channel::Sender<InstallProgress>,
+    executor: &BackgroundExecutor,
+) -> anyhow::Result<InstalledServer> {
+    let runtime =
+        node_runtime::resolve(data_dir.clone(), cancel.clone(), progress.clone(), executor).await?;
+    let prefix = data_dir.join("lsp").join("npm");
+    let cache = data_dir.join("lsp").join("npm-cache");
+    fs::create_dir_all(&prefix).context("could not create Dopad language server directory")?;
+    fs::create_dir_all(&cache).context("could not create Dopad npm cache directory")?;
+    report_progress(&progress, "Installing language server packages", None);
+    let mut arguments = vec![
+        runtime.npm_cli.clone().into_os_string(),
+        "install".into(),
+        "--prefix".into(),
+        prefix.clone().into_os_string(),
+        "--no-audit".into(),
+        "--no-fund".into(),
+        "--ignore-scripts".into(),
+        "--progress=false".into(),
+        "--cache".into(),
+        cache.into_os_string(),
+    ];
+    for package in spec.package.split_whitespace() {
+        anyhow::ensure!(
+            !package.starts_with('-') && package.contains('@'),
+            "language server package is not pinned to an exact version"
+        );
+        arguments.push(package.into());
+    }
+    let mut command = command_for_os(&runtime.node, &arguments)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().with_context(|| {
+        format!(
+            "could not start managed npm using {}",
+            runtime.node.display()
+        )
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("npm installer stdout is unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("npm installer stderr is unavailable"))?;
+    let output = run_child(
+        &mut child,
+        stdout,
+        stderr,
+        executor,
+        INSTALL_TIMEOUT,
+        Some(&cancel),
+    )
+    .await?;
+    if !output.success {
+        tracing::warn!(
+            server = spec.id,
+            output = %output.summary(),
+            "managed npm package installation failed"
+        );
+        anyhow::bail!("{}", npm_failure_message(spec.name, &output));
+    }
+    report_progress(&progress, "Verifying installed language server", None);
+    let entrypoint = resolve_npm_entrypoint(&prefix, spec)?;
+    let mut launch_args = vec![entrypoint.clone().into_os_string()];
+    launch_args.extend(spec.args.iter().map(OsString::from));
+    let mut version_args = vec![entrypoint.into_os_string()];
+    version_args.extend(spec.version_args.iter().map(OsString::from));
+    let version = verify_version(&runtime.node, &version_args, executor)
+        .await
+        .with_context(|| format!("{} was installed but could not be verified", spec.name))?;
+    tracing::info!(
+        server = spec.id,
+        runtime_version = %runtime.version,
+        managed_runtime = runtime.managed,
+        "managed language server installation verified"
+    );
+    Ok(InstalledServer {
+        executable: runtime.node,
+        args: launch_args,
+        version,
+        runtime_version: Some(runtime.version),
+        source: if runtime.managed {
+            "Dopad managed Node.js".to_owned()
+        } else {
+            "system Node.js runtime".to_owned()
+        },
+    })
+}
+
+fn resolve_npm_entrypoint(prefix: &Path, spec: &registry::ServerSpec) -> anyhow::Result<PathBuf> {
+    let node_modules = prefix.join("node_modules");
+    for package_spec in spec.package.split_whitespace() {
+        let (package, _) = package_spec
+            .rsplit_once('@')
+            .ok_or_else(|| anyhow!("language server package version is not pinned"))?;
+        let package_root = node_modules.join(package);
+        let manifest_path = package_root.join("package.json");
+        let Ok(bytes) = fs::read(&manifest_path) else {
+            continue;
+        };
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&bytes).context("installed package manifest is invalid")?;
+        let Some(bin) = manifest.get("bin") else {
+            continue;
+        };
+        let relative = if let Some(path) = bin.as_str() {
+            (package.rsplit('/').next() == Some(spec.executable)).then_some(path)
+        } else {
+            bin.get(spec.executable).and_then(serde_json::Value::as_str)
+        };
+        let Some(relative) = relative else {
+            continue;
+        };
+        let relative = Path::new(relative);
+        anyhow::ensure!(
+            relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_))),
+            "installed package executable path is unsafe"
+        );
+        let candidate = package_root.join(relative);
+        let canonical_root = package_root.canonicalize()?;
+        let canonical_entry = candidate.canonicalize()?;
+        anyhow::ensure!(
+            canonical_entry.starts_with(&canonical_root) && canonical_entry.is_file(),
+            "installed package executable escapes its package directory"
+        );
+        return Ok(canonical_entry);
+    }
+    anyhow::bail!("installed language server package was not found")
 }
 
 async fn query_installed_path(
@@ -160,10 +348,10 @@ async fn run_short_command(
 
 pub(super) async fn verify_version(
     executable: &std::path::Path,
-    args: &[&str],
+    args: &[OsString],
     executor: &BackgroundExecutor,
 ) -> anyhow::Result<String> {
-    let mut command = command_for(executable, args)?;
+    let mut command = command_for_os(executable, args)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -199,27 +387,6 @@ pub(super) async fn verify_version(
     Ok(version)
 }
 
-struct ProcessOutput {
-    success: bool,
-    stdout: String,
-    stderr: String,
-}
-
-impl ProcessOutput {
-    fn summary(&self) -> String {
-        let output = [self.stderr.trim(), self.stdout.trim()]
-            .into_iter()
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>()
-            .join("; ");
-        if output.is_empty() {
-            "no output".to_owned()
-        } else {
-            output
-        }
-    }
-}
-
 fn install_failure_message(
     method: registry::InstallMethod,
     server_name: &str,
@@ -252,108 +419,39 @@ fn install_failure_message(
             );
         }
         return format!(
-            "npm could not install {server_name}. Check that Node.js and npm are working, then retry."
+            "Dopad could not install {server_name} from the package registry. Check the network and Dopad data folder permissions, then retry."
         );
     }
 
     format!("The installer for {server_name} failed. Verify the required toolchain, then retry.")
 }
 
-async fn run_child(
-    child: &mut Child,
-    stdout: ChildStdout,
-    stderr: ChildStderr,
-    executor: &BackgroundExecutor,
-    timeout: Duration,
-    cancel: Option<&async_channel::Receiver<()>>,
-) -> anyhow::Result<ProcessOutput> {
-    let read = zip(read_stream(stdout), read_stream(stderr));
-    let process = race(
-        async { ProcessRace::Complete(zip(child.status(), read).await) },
-        async {
-            executor.timer(timeout).await;
-            ProcessRace::TimedOut
-        },
-    );
-    let outcome = if let Some(cancel) = cancel {
-        race(process, async {
-            let _ = cancel.recv().await;
-            ProcessRace::Cancelled
-        })
-        .await
+fn npm_failure_message(server_name: &str, output: &ProcessOutput) -> String {
+    let output_text = format!("{}\n{}", output.stderr, output.stdout).to_ascii_lowercase();
+    if [
+        "fetcherror",
+        "econnrefused",
+        "econnreset",
+        "etimedout",
+        "enotfound",
+        "eai_again",
+    ]
+    .iter()
+    .any(|marker| output_text.contains(marker))
+    {
+        format!(
+            "Dopad could not reach the package registry while installing {server_name}. Check the internet connection or proxy, then retry."
+        )
+    } else if ["eacces", "eperm", "permission denied"]
+        .iter()
+        .any(|marker| output_text.contains(marker))
+    {
+        format!(
+            "Dopad cannot write the {server_name} installation in its app data directory. Check folder permissions, then retry."
+        )
     } else {
-        process.await
-    };
-    match outcome {
-        ProcessRace::Complete((status, (stdout, stderr))) => {
-            let status = status.context("could not wait for child process")?;
-            Ok(ProcessOutput {
-                success: status.success(),
-                stdout,
-                stderr,
-            })
-        }
-        ProcessRace::TimedOut => {
-            anyhow::bail!("process timed out after {} seconds", timeout.as_secs())
-        }
-        ProcessRace::Cancelled => anyhow::bail!("installation was cancelled"),
-    }
-}
-
-enum ProcessRace<T> {
-    Complete(T),
-    TimedOut,
-    Cancelled,
-}
-
-async fn read_stream<R: AsyncRead + Unpin>(mut stream: R) -> String {
-    let mut captured = Vec::new();
-    let mut buffer = [0; 512];
-    while let Ok(length) = stream.read(&mut buffer).await {
-        if length == 0 {
-            break;
-        }
-        if captured.len() < MAX_CAPTURE_BYTES {
-            let take = (MAX_CAPTURE_BYTES - captured.len()).min(length);
-            captured.extend_from_slice(&buffer[..take]);
-        }
-    }
-    String::from_utf8_lossy(&captured).into_owned()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ProcessOutput, install_failure_message};
-    use crate::window::lsp::registry::InstallMethod;
-
-    #[test]
-    fn npm_registry_failures_show_actionable_message_without_raw_logs() {
-        let output = ProcessOutput {
-            success: false,
-            stdout: String::new(),
-            stderr: "FetchError request to https://registry.npmjs.org failed: EACCES".to_owned(),
-        };
-
-        let message =
-            install_failure_message(InstallMethod::Npm, "TypeScript Language Server", &output);
-
-        assert!(message.contains("internet connection or proxy"));
-        assert!(!message.contains("FetchError"));
-        assert!(!message.contains("registry.npmjs.org"));
-    }
-
-    #[test]
-    fn npm_permission_failures_do_not_show_installer_output() {
-        let output = ProcessOutput {
-            success: false,
-            stdout: String::new(),
-            stderr: "npm ERR! EACCES: permission denied".to_owned(),
-        };
-
-        let message =
-            install_failure_message(InstallMethod::Npm, "TypeScript Language Server", &output);
-
-        assert!(message.contains("permission to write"));
-        assert!(!message.contains("npm ERR!"));
+        format!(
+            "Dopad could not install {server_name}. Retry the installation; detailed output is available in the LSP logs."
+        )
     }
 }

@@ -192,6 +192,11 @@ impl DopadWindow {
         self.open_bottom_panel(view, None, cx);
     }
 
+    pub(super) fn show_lsp_output(&mut self, cx: &mut Context<Self>) {
+        self.bottom_panel.output.channel = Some(output::OutputChannel::Lsp);
+        self.open_bottom_panel(BottomPanelView::Output, None, cx);
+    }
+
     fn toggle_bottom_panel(
         &mut self,
         view: BottomPanelView,

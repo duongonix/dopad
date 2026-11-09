@@ -3,6 +3,7 @@ mod documents;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    ffi::OsString,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -29,14 +30,19 @@ struct ClientKey {
 #[derive(Clone)]
 struct ServerBinary {
     executable: PathBuf,
+    args: Vec<OsString>,
     version: String,
+    runtime_version: Option<String>,
     source: String,
 }
 
 #[derive(Clone)]
 pub(super) enum PromptPhase {
     Missing,
-    Installing,
+    Installing {
+        message: String,
+        progress: Option<f32>,
+    },
     Starting,
     Error(String),
     Manual,
@@ -174,22 +180,46 @@ async fn detect_server(
     let cached_candidate = metadata
         .get(&spec_key(spec))
         .filter(|cached| cached.executable.is_file())
-        .map(|cached| (cached.executable.clone(), cached.source.clone()));
+        .map(|cached| {
+            let args = if cached.launch_args.is_empty() {
+                spec.args.iter().map(OsString::from).collect()
+            } else {
+                cached.launch_args.iter().map(OsString::from).collect()
+            };
+            (
+                cached.executable.clone(),
+                args,
+                cached.runtime_version.clone(),
+                cached.source.clone(),
+            )
+        });
     let app_data_executable = app_data_npm_executable(spec, metadata_path.as_deref());
+    let default_args = spec.args.iter().map(OsString::from).collect::<Vec<_>>();
     let mut candidates = Vec::with_capacity(3);
     candidates.extend(cached_candidate);
-    candidates.extend(app_data_executable.map(|path| (path, "Dopad app data".to_owned())));
+    candidates.extend(app_data_executable.map(|path| {
+        (
+            path,
+            default_args.clone(),
+            None,
+            "Dopad app data".to_owned(),
+        )
+    }));
     candidates.extend(
-        registry::find_executable(spec.executable).map(|path| (path, "system PATH".to_owned())),
+        registry::find_executable(spec.executable)
+            .map(|path| (path, default_args, None, "system PATH".to_owned())),
     );
     let mut seen_paths = HashSet::new();
     let mut binary = None;
-    for (executable, source) in candidates {
+    for (executable, args, runtime_version, source) in candidates {
         if !seen_paths.insert(executable.clone()) {
             continue;
         }
-        let version = installation::verify_version(&executable, spec.version_args, executor).await;
-        if let Some(verified) = verified_server_binary(executable, source, version, spec.id) {
+        let version_args = verification_args(&executable, &args, spec);
+        let version = installation::verify_version(&executable, &version_args, executor).await;
+        if let Some(verified) =
+            verified_server_binary(executable, args, runtime_version, source, version, spec.id)
+        {
             binary = Some(verified);
             break;
         }
@@ -199,6 +229,8 @@ async fn detect_server(
 
 fn verified_server_binary(
     executable: PathBuf,
+    args: Vec<OsString>,
+    runtime_version: Option<String>,
     source: String,
     version: anyhow::Result<String>,
     server_id: &str,
@@ -206,7 +238,9 @@ fn verified_server_binary(
     match version {
         Ok(version) => Some(ServerBinary {
             executable,
+            args,
             version,
+            runtime_version,
             source,
         }),
         Err(error) => {
@@ -218,6 +252,26 @@ fn verified_server_binary(
             );
             None
         }
+    }
+}
+
+fn verification_args(
+    executable: &Path,
+    launch_args: &[OsString],
+    spec: &ServerSpec,
+) -> Vec<OsString> {
+    let file_name = executable
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let node_executable =
+        file_name.eq_ignore_ascii_case("node") || file_name.eq_ignore_ascii_case("node.exe");
+    if node_executable && let Some(entrypoint) = launch_args.first() {
+        std::iter::once(entrypoint.clone())
+            .chain(spec.version_args.iter().map(OsString::from))
+            .collect()
+    } else {
+        spec.version_args.iter().map(OsString::from).collect()
     }
 }
 
@@ -313,13 +367,15 @@ fn spec_key(spec: &ServerSpec) -> String {
 
 #[cfg(test)]
 mod lsp_detection_tests {
-    use super::verified_server_binary;
-    use std::path::PathBuf;
+    use super::{ServerSpec, registry::InstallMethod, verification_args, verified_server_binary};
+    use std::{ffi::OsString, path::PathBuf};
 
     #[test]
     fn does_not_accept_a_rustup_proxy_when_version_probe_fails() {
         let binary = verified_server_binary(
             PathBuf::from("rust-analyzer.exe"),
+            Vec::new(),
+            None,
             "system PATH".to_owned(),
             Err(anyhow::anyhow!("unknown binary in active toolchain")),
             "rust-analyzer",
@@ -332,6 +388,8 @@ mod lsp_detection_tests {
     fn accepts_only_a_binary_with_a_successful_version_probe() {
         let binary = verified_server_binary(
             PathBuf::from("rust-analyzer.exe"),
+            vec![OsString::from("--stdio")],
+            None,
             "system PATH".to_owned(),
             Ok("rust-analyzer 1.0".to_owned()),
             "rust-analyzer",
@@ -340,5 +398,36 @@ mod lsp_detection_tests {
 
         assert_eq!(binary.version, "rust-analyzer 1.0");
         assert_eq!(binary.source, "system PATH");
+        assert_eq!(binary.args, [OsString::from("--stdio")]);
+    }
+
+    #[test]
+    fn managed_node_language_server_verification_uses_the_entrypoint() {
+        let spec = ServerSpec {
+            id: "test",
+            name: "test",
+            language: "test",
+            executable: "test-language-server",
+            args: &["--stdio"],
+            version_args: &["--version"],
+            method: InstallMethod::Npm,
+            package: "test-language-server@1.0.0",
+            manual_url: "https://example.invalid",
+        };
+        let args = verification_args(
+            PathBuf::from("C:/Dopad/node.exe").as_path(),
+            &[
+                OsString::from("C:/Dopad/node_modules/test/server.js"),
+                OsString::from("--stdio"),
+            ],
+            &spec,
+        );
+        assert_eq!(
+            args,
+            [
+                OsString::from("C:/Dopad/node_modules/test/server.js"),
+                OsString::from("--version")
+            ]
+        );
     }
 }

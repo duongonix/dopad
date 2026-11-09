@@ -180,8 +180,8 @@ impl DopadWindow {
                 return;
             }
             let executable = binary.executable.clone();
-            let args = spec.args;
-            let metadata_key = spec_key(spec);
+            let args = binary.args.clone();
+            let persisted_launch_args = binary.args.clone();
             let diagnostics = this
                 .update(cx, |window, _| window.diagnostic_bus.clone())
                 .unwrap_or_default();
@@ -189,7 +189,7 @@ impl DopadWindow {
             let result = executor
                 .clone()
                 .spawn(async move {
-                    LspClient::start(executable, args, &root, &executor, diagnostics, server_id)
+                    LspClient::start(executable, &args, &root, &executor, diagnostics, server_id)
                         .await
                 })
                 .await;
@@ -205,8 +205,12 @@ impl DopadWindow {
                             spec.id,
                             binary.version,
                             binary.executable,
+                            &persisted_launch_args,
+                            binary.runtime_version,
                             &binary.source,
                         );
+                        let mut metadata = metadata;
+                        metadata.lsp_initialized = true;
                         window.lsp.metadata.insert(spec_key(spec), metadata);
                         persist_metadata(
                             window.lsp.metadata_path.clone(),
@@ -228,22 +232,21 @@ impl DopadWindow {
                         window.ensure_active_lsp(cx);
                     }
                     Err(error) => {
-                        window.lsp.binaries.remove(&metadata_key);
-                        if window.lsp.metadata.remove(&metadata_key).is_some() {
-                            persist_metadata(
-                                window.lsp.metadata_path.clone(),
-                                window.lsp.metadata.clone(),
-                                cx,
-                            );
+                        let message = format!("Could not start {}: {error:#}", spec.name);
+                        if let Some(prompt) = window
+                            .lsp
+                            .current_prompt
+                            .as_mut()
+                            .filter(|prompt| prompt.spec.id == spec.id)
+                        {
+                            prompt.phase = PromptPhase::Error(message);
+                        } else {
+                            window.lsp.enqueue_prompt(InstallPrompt {
+                                spec,
+                                phase: PromptPhase::Error(message),
+                                target_document: Some(document_id),
+                            });
                         }
-                        window.lsp.enqueue_prompt(InstallPrompt {
-                            spec,
-                            phase: PromptPhase::Error(format!(
-                                "Could not start {}: {error:#}",
-                                spec.name
-                            )),
-                            target_document: Some(document_id),
-                        });
                         cx.notify();
                     }
                 }

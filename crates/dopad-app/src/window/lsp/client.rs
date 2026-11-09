@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     io,
     path::{Path, PathBuf},
     process::Stdio,
@@ -37,7 +38,7 @@ pub(super) struct LspClient {
 impl LspClient {
     pub(super) async fn start(
         executable: PathBuf,
-        args: &[&str],
+        args: &[OsString],
         root: &Path,
         executor: &BackgroundExecutor,
         diagnostics: DiagnosticBus,
@@ -46,7 +47,7 @@ impl LspClient {
         let root_uri = url::Url::from_file_path(root)
             .map_err(|_| anyhow!("workspace path cannot be represented as a file URI"))?
             .to_string();
-        let mut command = command_for(&executable, args)?;
+        let mut command = command_for_os(&executable, args)?;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -237,6 +238,11 @@ impl Drop for PendingGuard {
 }
 
 pub(super) fn command_for(executable: &Path, args: &[&str]) -> anyhow::Result<Command> {
+    let arguments = args.iter().map(OsString::from).collect::<Vec<_>>();
+    command_for_os(executable, &arguments)
+}
+
+pub(super) fn command_for_os(executable: &Path, args: &[OsString]) -> anyhow::Result<Command> {
     #[cfg(windows)]
     if executable
         .extension()
@@ -245,9 +251,14 @@ pub(super) fn command_for(executable: &Path, args: &[&str]) -> anyhow::Result<Co
             extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
         })
     {
+        let string_args = args
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let argument_refs = string_args.iter().map(String::as_str).collect::<Vec<_>>();
         let mut command = Command::new("cmd.exe");
         command.args(["/D", "/S", "/V:OFF", "/C"]);
-        command.arg(command_script_line(executable, args)?);
+        command.arg(command_script_line(executable, &argument_refs)?);
         crate::process::suppress_async_console(&mut command);
         return Ok(command);
     }

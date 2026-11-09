@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -14,6 +15,14 @@ pub(super) struct ServerMetadata {
     pub server_id: String,
     pub version: String,
     pub executable: PathBuf,
+    #[serde(default)]
+    pub launch_args: Vec<String>,
+    #[serde(default)]
+    pub runtime_version: Option<String>,
+    #[serde(default)]
+    pub installation_verified: bool,
+    #[serde(default)]
+    pub lsp_initialized: bool,
     pub source: String,
     pub verified_at_unix_seconds: u64,
 }
@@ -67,12 +76,21 @@ pub(super) fn verified_now(
     server_id: &str,
     version: String,
     executable: PathBuf,
+    launch_args: &[OsString],
+    runtime_version: Option<String>,
     source: &str,
 ) -> ServerMetadata {
     ServerMetadata {
         server_id: server_id.to_owned(),
         version,
         executable,
+        launch_args: launch_args
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect(),
+        runtime_version,
+        installation_verified: true,
+        lsp_initialized: false,
         source: source.to_owned(),
         verified_at_unix_seconds: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -91,7 +109,14 @@ mod tests {
         let mut servers = HashMap::new();
         servers.insert(
             "rust-analyzer".into(),
-            verified_now("rust-analyzer", "1.0".into(), PathBuf::from("ra"), "system"),
+            verified_now(
+                "rust-analyzer",
+                "1.0".into(),
+                PathBuf::from("ra"),
+                &[],
+                None,
+                "system",
+            ),
         );
         save(&path, &servers).expect("write metadata");
         assert_eq!(load(&path).get("rust-analyzer").unwrap().version, "1.0");
@@ -105,11 +130,25 @@ mod tests {
         let path = dir.path().join("servers.json");
         let first = HashMap::from([(
             "rust-analyzer".into(),
-            verified_now("rust-analyzer", "1".into(), PathBuf::from("ra"), "system"),
+            verified_now(
+                "rust-analyzer",
+                "1".into(),
+                PathBuf::from("ra"),
+                &[],
+                None,
+                "system",
+            ),
         )]);
         let second = HashMap::from([(
             "gopls".into(),
-            verified_now("gopls", "1".into(), PathBuf::from("gopls"), "system"),
+            verified_now(
+                "gopls",
+                "1".into(),
+                PathBuf::from("gopls"),
+                &[],
+                None,
+                "system",
+            ),
         )]);
 
         save(&path, &first).expect("write first server");

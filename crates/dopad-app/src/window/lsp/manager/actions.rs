@@ -1,9 +1,18 @@
 use std::path::PathBuf;
 
+use futures_lite::future::race;
 use gpui_kit::Context;
 
-use super::{PromptPhase, ServerBinary, ServerSpec, installation, registry, spec_key};
+use super::{
+    PromptPhase, ServerBinary, ServerSpec, installation, persist_metadata, persistence, registry,
+    spec_key,
+};
 use crate::window::DopadWindow;
+
+enum InstallEvent {
+    Progress(Result<installation::InstallProgress, async_channel::RecvError>),
+    Finished(Result<anyhow::Result<installation::InstalledServer>, async_channel::RecvError>),
+}
 
 impl DopadWindow {
     pub(in crate::window) fn cancel_lsp_prompt(&mut self, cx: &mut Context<Self>) {
@@ -12,7 +21,7 @@ impl DopadWindow {
         };
         if matches!(
             prompt.phase,
-            PromptPhase::Installing | PromptPhase::Starting
+            PromptPhase::Installing { .. } | PromptPhase::Starting
         ) {
             self.lsp.current_prompt = Some(prompt);
             return;
@@ -32,7 +41,7 @@ impl DopadWindow {
         }
         if matches!(
             prompt.phase,
-            PromptPhase::Installing | PromptPhase::Starting
+            PromptPhase::Installing { .. } | PromptPhase::Starting
         ) {
             self.lsp.current_prompt = Some(prompt);
             return;
@@ -44,7 +53,10 @@ impl DopadWindow {
             cx.notify();
             return;
         };
-        prompt.phase = PromptPhase::Installing;
+        prompt.phase = PromptPhase::Installing {
+            message: "Preparing installation".to_owned(),
+            progress: None,
+        };
         let spec = prompt.spec;
         let target_document = prompt.target_document;
         self.lsp.current_prompt = Some(prompt);
@@ -52,21 +64,95 @@ impl DopadWindow {
         self.lsp.install_cancel = Some(cancel_tx);
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
+            let (progress_tx, progress_rx) = async_channel::bounded(16);
             let install_executor = executor.clone();
-            let install_task = executor.clone().spawn(async move {
-                installation::install(spec, data_dir, cancel_rx, &install_executor).await
-            });
-            let result = install_task.await;
+            let (finished_tx, finished_rx) = async_channel::bounded(1);
+            executor
+                .clone()
+                .spawn(async move {
+                    let result = installation::install(
+                        spec,
+                        data_dir,
+                        cancel_rx,
+                        progress_tx,
+                        &install_executor,
+                    )
+                    .await;
+                    let _ = finished_tx.send(result).await;
+                })
+                .detach();
+            let result = loop {
+                let event = race(
+                    async { InstallEvent::Progress(progress_rx.recv().await) },
+                    async { InstallEvent::Finished(finished_rx.recv().await) },
+                )
+                .await;
+                match event {
+                    InstallEvent::Progress(Ok(progress)) => {
+                        let _ = this.update(cx, |window, cx| {
+                            let Some(prompt) = window
+                                .lsp
+                                .current_prompt
+                                .as_mut()
+                                .filter(|prompt| prompt.spec.id == spec.id)
+                            else {
+                                return;
+                            };
+                            if !matches!(prompt.phase, PromptPhase::Installing { .. }) {
+                                return;
+                            }
+                            let changed = !matches!(
+                                &prompt.phase,
+                                PromptPhase::Installing { message, progress: current }
+                                    if message == &progress.message && current == &progress.fraction
+                            );
+                            if changed {
+                                prompt.phase = PromptPhase::Installing {
+                                    message: progress.message,
+                                    progress: progress.fraction,
+                                };
+                                cx.notify();
+                            }
+                        });
+                    }
+                    InstallEvent::Progress(Err(_)) => {
+                        break match finished_rx.recv().await {
+                            Ok(result) => result,
+                            Err(_) => Err(anyhow::anyhow!("LSP installer ended without a result")),
+                        };
+                    }
+                    InstallEvent::Finished(Ok(result)) => break result,
+                    InstallEvent::Finished(Err(_)) => {
+                        break Err(anyhow::anyhow!("LSP installer ended without a result"));
+                    }
+                }
+            };
             let _ = this.update(cx, |window, cx| {
                 window.lsp.install_cancel.take();
                 match result {
-                    Ok((executable, version)) => {
+                    Ok(installed) => {
+                        let metadata = persistence::verified_now(
+                            spec.id,
+                            installed.version.clone(),
+                            installed.executable.clone(),
+                            &installed.args,
+                            installed.runtime_version.clone(),
+                            &installed.source,
+                        );
+                        window.lsp.metadata.insert(spec_key(spec), metadata);
+                        persist_metadata(
+                            window.lsp.metadata_path.clone(),
+                            window.lsp.metadata.clone(),
+                            cx,
+                        );
                         window.lsp.binaries.insert(
                             spec_key(spec),
                             ServerBinary {
-                                executable,
-                                version,
-                                source: format!("installed via {:?}", spec.method),
+                                executable: installed.executable,
+                                args: installed.args,
+                                version: installed.version,
+                                runtime_version: installed.runtime_version,
+                                source: installed.source,
                             },
                         );
                         if let Some(prompt) = window
@@ -113,18 +199,29 @@ impl DopadWindow {
             return;
         };
         if let PromptPhase::Error(_) = prompt.phase {
-            self.lsp.binaries.remove(&spec_key(prompt.spec));
-            self.lsp.checked.remove(prompt.spec.id);
             self.lsp.current_prompt = None;
             if let Some(document_id) = prompt.target_document
                 && let Some(tab) = self.tabs.iter().find(|tab| tab.id == document_id)
                 && let (Some(path), language) = (tab.path.clone(), tab.language())
             {
+                if let Some(binary) = self.lsp.binaries.get(&spec_key(prompt.spec)).cloned() {
+                    self.start_document_server(
+                        document_id,
+                        path,
+                        language,
+                        prompt.spec,
+                        binary,
+                        cx,
+                    );
+                    cx.notify();
+                    return;
+                }
+                self.lsp.checked.remove(prompt.spec.id);
                 self.ensure_lsp_document(document_id, path, language, prompt.spec, cx);
                 cx.notify();
                 return;
             }
-            self.lsp.current_prompt = None;
+            self.lsp.checked.remove(prompt.spec.id);
             self.ensure_active_lsp(cx);
             cx.notify();
         } else {

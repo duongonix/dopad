@@ -41,6 +41,9 @@ impl DopadWindow {
                 })
                 .default_value(text)
         });
+        state.update(cx, |state, _| {
+            state.lsp_mut().completion_provider = Some(super::lsp::local_provider(language));
+        });
         let (search_decorations, current_search_decorations, bracket_decorations) =
             state.update(cx, |state, cx| {
                 (

@@ -19,6 +19,7 @@ use lsp_types::{
 use serde_json::json;
 
 use super::client::LspClient;
+use super::completion::{filter_response, local_completions, normalize_for_editor, prefix_at};
 
 const COMPLETION_DEBOUNCE: Duration = Duration::from_millis(55);
 const COMPLETION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -82,6 +83,7 @@ impl LspDocument {
     pub(super) fn provider(&self) -> Rc<dyn CompletionProvider> {
         Rc::new(LspCompletionProvider {
             document: self.clone(),
+            language_id: self.language_id.clone(),
         })
     }
 
@@ -239,6 +241,7 @@ impl LspDocument {
 
 struct LspCompletionProvider {
     document: LspDocument,
+    language_id: String,
 }
 
 impl CompletionProvider for LspCompletionProvider {
@@ -251,8 +254,14 @@ impl CompletionProvider for LspCompletionProvider {
         cx: &mut App,
     ) -> Task<anyhow::Result<CompletionResponse>> {
         let document = self.document.clone();
+        let language_id = self.language_id.clone();
         let snapshot = text.clone();
         let executor = cx.background_executor().clone();
+        let prefix = prefix_at(&snapshot, offset);
+        let local = local_completions(&language_id, &prefix);
+        if !local.is_empty() {
+            return Task::ready(Ok(CompletionResponse::Array(local)));
+        }
         executor.clone().spawn(async move {
             executor.timer(COMPLETION_DEBOUNCE).await;
             let trigger_character = trigger
@@ -266,7 +275,7 @@ impl CompletionProvider for LspCompletionProvider {
                 },
                 trigger_character,
             };
-            document
+            let response = document
                 .request_completions(
                     &snapshot,
                     offset,
@@ -274,7 +283,9 @@ impl CompletionProvider for LspCompletionProvider {
                     &executor,
                     COMPLETION_TIMEOUT,
                 )
-                .await
+                .await?;
+            let response = filter_response(response, &prefix, &language_id);
+            Ok(normalize_for_editor(response, &snapshot, offset, &prefix))
         })
     }
 
@@ -348,17 +359,7 @@ pub(super) fn offset_to_position(text: &Rope, byte_offset: usize) -> Position {
 }
 
 fn current_word(text: &Rope, byte_offset: usize) -> String {
-    let cursor = byte_offset.min(text.len());
-    let point = text.offset_to_point(cursor);
-    let start = text.line_start_offset(point.row);
-    let prefix = text.slice(start..cursor).to_string();
-    let word_start = prefix
-        .char_indices()
-        .rev()
-        .take_while(|(_, character)| character.is_alphanumeric() || *character == '_')
-        .last()
-        .map_or(prefix.len(), |(index, _)| index);
-    prefix[word_start..].to_owned()
+    prefix_at(text, byte_offset)
 }
 
 fn safe_inline_suffix(item: &CompletionItem, prefix: &str) -> Option<String> {
