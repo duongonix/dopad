@@ -21,7 +21,7 @@
 <br />
 
 <p align="center">
-  <img src="web/screenshot.png" alt="Dopad with its file explorer, editor tabs, code editing area, and integrated terminal" width="100%" />
+  <img src="screenshot.png" alt="Dopad with its file explorer, editor tabs, code editing area, and integrated terminal" width="100%" />
 </p>
 
 ## A focused workspace
