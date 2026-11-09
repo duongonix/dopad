@@ -1,0 +1,51 @@
+Dopad Community License (Non-Commercial Forks) 1.0
+
+Copyright (c) 2026 Dopad contributors
+
+This license applies to Dopad-authored source, documentation, and assets, except where a file or directory contains a separate license or notice. Third-party materials retain their own terms.
+
+1. Definitions
+
+“Dopad” means the project and materials covered by this license.
+
+“Official Release” means an unmodified application package published by the Dopad maintainers through the official Dopad release page at https://github.com/duongonix/dopad/releases.
+
+“Forked Build” means an application or package built from a fork, copy, or modified version of Dopad source code outside the official release process.
+
+“Commercial Purpose” means an activity primarily intended for commercial advantage or monetary compensation. This includes selling or licensing a Forked Build for a fee, bundling it with a paid product, offering it through a paid service, or deploying it in the ordinary operations of a for-profit business.
+
+2. Permission to Use and Modify
+
+You may access, study, copy, modify, build, run, and share Dopad source code and Forked Builds for non-commercial purposes, provided you comply with this license.
+
+You may download, install, run, and redistribute an unmodified Official Release for any purpose, including commercial use, provided that you do not modify it or present it as your own product.
+
+3. Commercial Fork Restriction
+
+Without prior written permission from the Dopad maintainers, you may not build, use, sell, license, distribute, bundle, host, or otherwise offer a Forked Build for a Commercial Purpose.
+
+This restriction applies to internal business deployment as well as public or paid distribution. A separate written commercial license is required for commercial use of a Forked Build.
+
+4. Notices and Modified Builds
+
+Keep this license and all applicable copyright and attribution notices with copies of Dopad or a Forked Build.
+
+Clearly identify a Forked Build as modified and do not state or imply that it is an official Dopad release.
+
+5. Contributions
+
+Contributions are welcome. By submitting a contribution for inclusion in Dopad, you grant the Dopad maintainers and recipients of Dopad a perpetual, worldwide, non-exclusive, royalty-free license to use, reproduce, modify, build, and distribute that contribution as part of Dopad under this license. You retain copyright in your contribution.
+
+This contribution permission does not authorize a commercial Forked Build. You confirm that you have the right to submit the contribution under these terms.
+
+6. Names and Marks
+
+This license does not grant permission to use Dopad names, logos, or other trademarks to suggest endorsement or official status. You may identify compatibility or describe a Forked Build as a fork, provided the description is accurate and does not imply endorsement.
+
+7. Termination
+
+If you violate this license, the permissions granted to you end. They may be reinstated only through written permission from the Dopad maintainers.
+
+8. Disclaimer
+
+Dopad and all covered materials are provided “as is,” without warranties or conditions of any kind, to the extent permitted by law. The contributors are not liable for claims or damages arising from use of the covered materials, to the extent permitted by law.
