@@ -446,4 +446,3 @@ impl DopadWindow {
         cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(line));
     }
 }
-

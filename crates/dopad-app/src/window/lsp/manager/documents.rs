@@ -344,4 +344,3 @@ mod tests {
         assert!(completion_highlight_ranges("pub", &item).is_empty());
     }
 }
-

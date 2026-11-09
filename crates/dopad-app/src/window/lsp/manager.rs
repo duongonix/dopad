@@ -342,4 +342,3 @@ mod lsp_detection_tests {
         assert_eq!(binary.source, "system PATH");
     }
 }
-

@@ -566,4 +566,3 @@ impl DopadWindow {
         }
     }
 }
-

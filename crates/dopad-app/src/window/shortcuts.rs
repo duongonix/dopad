@@ -507,4 +507,3 @@ mod tests {
         assert!(conflicts[0].contains("Save"));
     }
 }
-

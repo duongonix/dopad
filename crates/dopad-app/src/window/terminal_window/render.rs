@@ -283,4 +283,3 @@ fn fixed_control(button: impl IntoElement) -> Div {
         .justify_center()
         .child(button)
 }
-

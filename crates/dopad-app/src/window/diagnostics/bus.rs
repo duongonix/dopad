@@ -171,4 +171,3 @@ fn truncate_string(value: &mut String, max_bytes: usize) {
     value.truncate(boundary);
     value.push_str("...");
 }
-

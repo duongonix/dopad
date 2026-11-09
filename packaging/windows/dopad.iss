@@ -259,4 +259,3 @@ begin
   if CurUninstallStep = usUninstall then
     RemoveCliPath;
 end;
-

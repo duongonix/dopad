@@ -149,4 +149,3 @@ pub fn probe(
             .unwrap_or_else(|| "Desktop did not complete the IPC readiness probe".into()),
     ))
 }
-

@@ -184,4 +184,3 @@ pub(super) fn render(
         .children([header.into_any_element(), body])
         .into_any_element()
 }
-

@@ -38,4 +38,3 @@ pub fn set_level(level: &str) -> Result<(), String> {
         .ok_or_else(|| "logging subscriber is not initialized".to_owned())?;
     handle.reload(filter).map_err(|error| error.to_string())
 }
-

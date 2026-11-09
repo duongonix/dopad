@@ -109,4 +109,3 @@ pub(super) fn render_footer_buttons(
         .child(later)
         .child(action)
 }
-

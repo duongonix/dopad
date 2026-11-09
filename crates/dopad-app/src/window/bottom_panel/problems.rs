@@ -392,4 +392,3 @@ fn render_row(
         }
     }
 }
-

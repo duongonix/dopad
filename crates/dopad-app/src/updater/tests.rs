@@ -50,4 +50,3 @@ fn known_update_keeps_the_footer_indicator_through_package_handoff() {
     );
     assert!(UpdateState::PackageOpened(details).has_update());
 }
-

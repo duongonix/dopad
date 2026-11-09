@@ -230,4 +230,3 @@ jobs:
           body_path: .github/release-notes/${{ github.ref_name }}.md
           files: dist/release/*
           fail_on_unmatched_files: true
-

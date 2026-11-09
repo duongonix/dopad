@@ -384,4 +384,3 @@ pub(crate) fn current_version() -> &'static str {
 
 #[cfg(test)]
 mod tests;
-

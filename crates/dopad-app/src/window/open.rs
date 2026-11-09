@@ -384,4 +384,3 @@ mod tests {
         assert!(!tab.loading_indicator_visible);
     }
 }
-

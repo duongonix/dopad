@@ -132,4 +132,3 @@ mod tests {
         assert_eq!(format_bytes(1_048_576), "1.0 MB");
     }
 }
-

@@ -16,4 +16,3 @@ mod updater;
 mod window;
 
 pub use app::run;
-
