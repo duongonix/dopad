@@ -30,6 +30,7 @@ impl Render for DopadWindow {
         match self.bottom_panel.active {
             Some(bottom_panel::BottomPanelView::Terminal) => {
                 self.ensure_terminal(Some(window), cx);
+                self.focus_terminal_if_requested(window);
             }
             Some(bottom_panel::BottomPanelView::Problems) => {
                 self.ensure_problem_filter(Some(window), cx);

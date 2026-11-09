@@ -102,6 +102,7 @@ impl Default for OutputState {
 pub(super) struct BottomPanelState {
     pub(super) active: Option<BottomPanelView>,
     pub(super) height: f32,
+    focus_terminal_on_show: bool,
     problems: ProblemsState,
     output: OutputState,
 }
@@ -111,6 +112,7 @@ impl Default for BottomPanelState {
         Self {
             active: None,
             height: terminal_window::TERMINAL_PANEL_DEFAULT_HEIGHT,
+            focus_terminal_on_show: false,
             problems: ProblemsState::default(),
             output: OutputState::default(),
         }
@@ -120,6 +122,14 @@ impl Default for BottomPanelState {
 impl BottomPanelState {
     pub(super) fn is_active(&self, view: BottomPanelView) -> bool {
         self.active == Some(view)
+    }
+
+    fn request_focus_for(&mut self, view: BottomPanelView) {
+        self.focus_terminal_on_show = view == BottomPanelView::Terminal;
+    }
+
+    fn take_terminal_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.focus_terminal_on_show)
     }
 
     pub(super) fn invalidate_problems(&mut self) {
@@ -217,6 +227,7 @@ impl DopadWindow {
         cx: &mut Context<Self>,
     ) {
         self.bottom_panel.active = Some(view);
+        self.bottom_panel.request_focus_for(view);
         if self.bottom_panel.height == 0. {
             self.bottom_panel.height = terminal_window::TERMINAL_PANEL_DEFAULT_HEIGHT;
         }
@@ -279,10 +290,19 @@ impl DopadWindow {
                     terminal.discover_and_start(cx);
                 }
             });
-            window.on_next_frame(move |window, cx| {
-                terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
-            });
         }
+    }
+
+    pub(super) fn focus_terminal_if_requested(&mut self, window: &mut Window) {
+        if !self.bottom_panel.take_terminal_focus_request() {
+            return;
+        }
+        let Some(terminal) = self.terminal_panel.as_ref().cloned() else {
+            return;
+        };
+        window.on_next_frame(move |window, cx| {
+            terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+        });
     }
 
     pub(super) fn ensure_problem_filter(
@@ -449,5 +469,23 @@ impl DopadWindow {
             return;
         };
         cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(line));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BottomPanelState, BottomPanelView};
+
+    #[test]
+    fn terminal_focus_request_is_one_shot_and_cleared_by_other_views() {
+        let mut state = BottomPanelState::default();
+
+        state.request_focus_for(BottomPanelView::Terminal);
+        assert!(state.take_terminal_focus_request());
+        assert!(!state.take_terminal_focus_request());
+
+        state.request_focus_for(BottomPanelView::Terminal);
+        state.request_focus_for(BottomPanelView::Problems);
+        assert!(!state.take_terminal_focus_request());
     }
 }

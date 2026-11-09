@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-app"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "arborium-scss",
@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-cli"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dopad-ipc",
  "serde_json",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "ropey 1.6.1",
  "serde",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-editor"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dopad-core",
  "regex",
@@ -1620,7 +1620,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-ipc"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "interprocess",
  "libc",
@@ -1632,7 +1632,7 @@ dependencies = [
 
 [[package]]
 name = "dopad-preview"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dopad-core",
  "markdown",
@@ -1645,11 +1645,11 @@ dependencies = [
 
 [[package]]
 name = "dopad-syntax"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "dopad-terminal"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "alacritty_terminal",
  "anyhow",

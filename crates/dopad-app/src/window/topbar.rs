@@ -4,9 +4,9 @@ use gpui_kit::component::{
     button::{Button, ButtonCustomVariant, ButtonVariants},
 };
 use gpui_kit::{
-    AnyElement, Context, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, Window, WindowControlArea,
-    div, img, px, rgb,
+    AnyElement, AppContext, Context, Entity, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, ScrollHandle, StatefulInteractiveElement, Styled, TestSupportExt, Window,
+    WindowControlArea, div, img, px, rgb,
 };
 
 use super::DopadWindow;
@@ -20,6 +20,8 @@ pub(in crate::window) mod hover_scroll;
 mod scroll;
 #[path = "topbar/tab_context.rs"]
 mod tab_context;
+#[path = "topbar/tab_drag.rs"]
+mod tab_drag;
 use file_icon::tab_file_icon;
 #[path = "topbar/tab_visual.rs"]
 mod tab_visual;
@@ -232,6 +234,31 @@ pub(super) fn render(
                 tab_hover_state.update(cx, |state, cx| {
                     if *state != *hovered {
                         *state = *hovered;
+                        cx.notify();
+                    }
+                });
+            });
+            let drag_payload = tab_drag::DraggedTab::new(
+                document.id,
+                document.title.clone(),
+                palette.canvas,
+                palette.text,
+                palette.border,
+            );
+            tab = tab.on_drag(drag_payload, |payload, position, _, cx| {
+                cx.new(|_| payload.preview(position))
+            });
+            let reorder_view = view.clone();
+            let target_id = document.id;
+            tab = tab.on_drop(move |payload: &tab_drag::DraggedTab, _, cx| {
+                reorder_view.update(cx, |window, cx| {
+                    if tab_drag::reorder_tabs(
+                        &mut window.tabs,
+                        &mut window.active,
+                        payload.document_id,
+                        target_id,
+                        |document| document.id,
+                    ) {
                         cx.notify();
                     }
                 });
